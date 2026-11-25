@@ -14,6 +14,8 @@ android {
         // version code/name come from CI (-Pvcode / -Pvname) so each build is an update
         versionCode (project.hasProperty("vcode") ? project.getProperty("vcode").toInteger() : 1)
         versionName (project.hasProperty("vname") ? project.getProperty("vname") : "1.0")
+        // phone-only native code (64-bit ARM): smaller download, faster updates
+        ndk { abiFilters 'arm64-v8a' }
     }
 
     // Fixed signing key so every build updates in place (no "app not installed").

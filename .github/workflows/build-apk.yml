@@ -59,12 +59,13 @@ jobs:
             if gh release create "$TAG" "VoltRoute-${VER}.apk" \
                  --title "VoltRoute ${VER}" --notes "$NOTES"; then
               echo "Released $TAG"
-              # keep only the newest release (the in-app updater only needs latest)
-              gh release list --limit 200 --json tagName -q '.[].tagName' | grep -vx "$TAG" | while read -r t; do
+              # keep the newest 3 releases (so an update already downloading isn't cut off)
+              KEEP=$(gh release list --limit 200 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[0:3][] | .tagName')
+              gh release list --limit 200 --json tagName -q '.[].tagName' | grep -vxF "$KEEP" | while read -r t; do
                 gh release delete "$t" --cleanup-tag --yes || true
               done
-              # and remove every leftover tag (old tags point at history we don't publish)
-              gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate -q '.[].name' | grep -vx "$TAG" | while read -r t; do
+              # remove leftover tags that have no release (old history we don't publish)
+              gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate -q '.[].name' | grep -vxF "$KEEP" | while read -r t; do
                 gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/$t" || true
               done
               exit 0
