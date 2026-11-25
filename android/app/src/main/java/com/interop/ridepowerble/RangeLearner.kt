@@ -11,8 +11,15 @@ import android.content.Context
 class RangeLearner(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("range", Context.MODE_PRIVATE)
 
-    private var milesPerPct = prefs.getFloat("mpp", 0.30f).toDouble()
     private var samples = prefs.getInt("n", 0)
+    private var milesPerPct = run {
+        // Before any rides are learned, start from the pack size if the rider entered it:
+        // energy (V x Ah) / typical e-bike use at 15 mph. Otherwise a cautious 30 mi per charge.
+        val app = ctx.getSharedPreferences("app", Context.MODE_PRIVATE)
+        val s = app.getInt("packSeries", 0); val ah = app.getInt("packAh10", 0) / 10.0
+        val seeded = if (s > 0 && ah > 0) s * 3.7 * ah / (10.0 + 0.06 * 15 * 15) / 100.0 else 0.30
+        if (samples > 0) prefs.getFloat("mpp", seeded.toFloat()).toDouble() else seeded
+    }
     private var odo = prefs.getFloat("odo", 0f).toDouble()          // total miles ridden while connected
     private var anchorPct = prefs.getFloat("aPct", -1f).toDouble()
     private var anchorOdo = prefs.getFloat("aOdo", 0f).toDouble()

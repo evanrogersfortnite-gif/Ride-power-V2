@@ -34,7 +34,9 @@ class BatteryEstimator(ctx: Context) {
         3.50 to 6.0, 3.40 to 3.0, 3.00 to 0.0
     )
 
-    private var series = prefs.getInt("series", 0)                 // 0 = not learned yet
+    // pack voltage set by the rider in Settings (0 = auto-detect from voltage)
+    private val fixedSeries = ctx.getSharedPreferences("app", Context.MODE_PRIVATE).getInt("packSeries", 0)
+    private var series = if (fixedSeries > 0) fixedSeries else prefs.getInt("series", 0)   // 0 = not learned yet
     private var maxRestV = prefs.getFloat("maxRestV", 0f).toDouble()
     private var minRestV = prefs.getFloat("minRestV", 999f).toDouble()
     private var soc = prefs.getFloat("soc", -1f).toDouble()        // -1 = uninitialised
@@ -58,12 +60,13 @@ class BatteryEstimator(ctx: Context) {
         // learn series-cell count from the highest near-rest voltage ever seen
         if (!underLoad && batteryV > maxRestV) { maxRestV = batteryV }
         if (!underLoad && batteryV < minRestV && batteryV > 10.0) { minRestV = batteryV }
-        if (series == 0) {
+        if (fixedSeries > 0) series = fixedSeries
+        else if (series == 0) {
             val basis = if (maxRestV > 0) maxRestV else batteryV
             series = (basis / 4.2).roundToInt().coerceIn(1, 30)
         }
         // if a higher rest voltage appears, re-derive series (handles wrong first guess)
-        if (maxRestV > 0) {
+        if (fixedSeries == 0 && maxRestV > 0) {
             val s = (maxRestV / 4.2).roundToInt().coerceIn(1, 30)
             if (s > series) series = s
         }

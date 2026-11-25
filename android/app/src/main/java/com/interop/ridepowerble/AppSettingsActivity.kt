@@ -77,6 +77,15 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             line()
             val est = BatteryEstimator(this@AppSettingsActivity)
             val rng = RangeLearner(this@AppSettingsActivity)
+            choice("🔌", "Battery voltage", "packSeries", listOf("Auto-detect" to 0, "36 V (10S, 42 V full)" to 10,
+                "48 V (13S, 54.6 V full)" to 13, "52 V (14S, 58.8 V full)" to 14, "60 V (16S, 67.2 V full)" to 16,
+                "72 V (20S, 84 V full)" to 20), 0) { prefs().edit().putBoolean("resetLearners", true).apply() }
+            line()
+            choice("⚡", "Battery capacity", "packAh10", listOf("Not set" to 0) +
+                listOf(10, 12, 13, 15, 17, 17.5, 20, 21, 24, 25, 28, 30, 35, 40, 50).map {
+                    val n = it.toDouble(); (if (n % 1.0 == 0.0) "${n.toInt()} Ah" else "$n Ah") to (n * 10).toInt() }, 0) {
+                prefs().edit().putBoolean("resetLearners", true).apply() }
+            line()
             row("🔋", "Battery & range learning",
                 "Learned full range ≈ ${"%.0f".format(rng.fullRangeMiles())} mi\n${est.summary()}") { confirmResetBattery() }
             line()
@@ -253,13 +262,13 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             prefs().edit().putBoolean(key, on).apply()
         }
 
-    private fun choice(icon: String, title: String, key: String, opts: List<Pair<String, Int>>, def: Int) {
+    private fun choice(icon: String, title: String, key: String, opts: List<Pair<String, Int>>, def: Int, after: (() -> Unit)? = null) {
         val v = prefs().getInt(key, def)
         val label = opts.firstOrNull { it.second == v }?.first ?: opts[0].first
         row(icon, title, label) {
             AlertDialog.Builder(this).setTitle(title)
                 .setSingleChoiceItems(opts.map { it.first }.toTypedArray(), opts.indexOfFirst { it.second == v }) { d, i ->
-                    prefs().edit().putInt(key, opts[i].second).apply(); d.dismiss(); build()
+                    prefs().edit().putInt(key, opts[i].second).apply(); after?.invoke(); d.dismiss(); build()
                 }.setNegativeButton("Cancel", null).show()
         }
     }
