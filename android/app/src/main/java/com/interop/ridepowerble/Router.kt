@@ -85,6 +85,19 @@ object Router {
         } catch (e: Exception) { emptyList() }
     }
 
+    /** Address + postcode for a point (Nominatim reverse). Returns (postcode, address line) or null. */
+    fun reverse(lat: Double, lon: Double): Pair<String, String>? {
+        return try {
+            val o = JSONObject(httpGet("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=$lat&lon=$lon", 5000, 8000))
+            val a = o.optJSONObject("address") ?: return null
+            val street = listOf(a.optString("house_number"), a.optString("road")).filter { it.isNotEmpty() }.joinToString(" ")
+            val area = listOf("suburb", "neighbourhood", "village", "town", "city").map { a.optString(it) }.firstOrNull { it.isNotEmpty() } ?: ""
+            val city = listOf("city", "town", "village").map { a.optString(it) }.firstOrNull { it.isNotEmpty() } ?: ""
+            val line = listOf(street, area, if (city != area) city else "").filter { it.isNotEmpty() }.distinct().joinToString(", ")
+            a.optString("postcode", "") to line.ifEmpty { o.optString("display_name", "") }
+        } catch (e: Exception) { null }
+    }
+
     // ===================== places on the map =====================
     /** A named place to draw on the map. group: shop/food/health/fuel/bike/service/place */
     data class Poi(val name: String, val lat: Double, val lon: Double, val cat: String, val group: String, val sub: String)

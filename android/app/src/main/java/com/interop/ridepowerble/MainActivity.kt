@@ -238,10 +238,17 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         m.addOnMapClickListener { ll ->
             if (mode == Mode.BROWSE || mode == Mode.PLACE) {
                 hideResults(); hideKeyboard()
-                val hit = poiAt(ll)
-                if (hit != null) { selectPlace(Router.Place(hit.name, hit.lat, hit.lon, hit.name, hit.sub, hit.cat)); return@addOnMapClickListener true }
+                val hit = poiAt(ll) ?: basemapPoiAt(ll)
+                if (hit != null) {
+                    selectPlace(Router.Place(hit.name, hit.lat, hit.lon, hit.name, hit.sub, hit.cat))
+                    if (hit.sub.isEmpty()) fillAddress(hit.lat, hit.lon, false)
+                    return@addOnMapClickListener true
+                }
             }
             false
+        }
+        m.addOnMapLongClickListener { ll ->
+            if (mode == Mode.BROWSE || mode == Mode.PLACE) { dropPin(ll); true } else false
         }
         appliedStyle = styleUrl()
         m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
@@ -755,6 +762,61 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             if (d < bestD) { bestD = d; best = p }
         }
         return best
+    }
+
+    /** Shops/places drawn by the base map itself (its own icons), found under the finger. */
+    private fun basemapPoiAt(ll: LatLng): Router.Poi? {
+        val m = map ?: return null
+        val st = m.style ?: return null
+        val pt = m.projection.toScreenLocation(ll)
+        val r = dp(22).toFloat()
+        val ids = st.layers.filter { it.id != "poi-l" && ((it as? SymbolLayer)?.sourceLayer == "poi" || it.id.startsWith("poi")) }
+            .map { it.id }.toTypedArray()
+        if (ids.isEmpty()) return null
+        val feats = m.queryRenderedFeatures(android.graphics.RectF(pt.x - r, pt.y - r, pt.x + r, pt.y + r), *ids)
+        var best: Router.Poi? = null; var bestD = Float.MAX_VALUE
+        for (f in feats) {
+            val name = (if (f.hasProperty("name")) f.getStringProperty("name") else null) ?: continue
+            val g = f.geometry() as? org.maplibre.geojson.Point ?: continue
+            val sp = m.projection.toScreenLocation(LatLng(g.latitude(), g.longitude()))
+            val d = Math.hypot((sp.x - pt.x).toDouble(), (sp.y - pt.y).toDouble()).toFloat()
+            if (d < bestD) {
+                bestD = d
+                val cls = if (f.hasProperty("subclass")) f.getStringProperty("subclass") else if (f.hasProperty("class")) f.getStringProperty("class") else ""
+                best = Router.Poi(name, g.latitude(), g.longitude(), cls ?: "", "place", "")
+            }
+        }
+        return best
+    }
+
+    /** Long-press: drop a pin, show its postcode and address, with Directions. */
+    private fun dropPin(ll: LatLng) {
+        val pin = Router.Place("Dropped pin", ll.latitude, ll.longitude, "Dropped pin",
+            String.format(Locale.US, "%.5f, %.5f", ll.latitude, ll.longitude), "")
+        hideResults(); hideKeyboard()
+        dest = pin; routes = emptyList(); nav = null; sel = 0
+        setSearchText(pin.title)
+        srcDest?.setGeoJson(pointJson(pin.lat, pin.lon))
+        redrawRoutes()
+        setMode(Mode.PLACE)
+        fillAddress(ll.latitude, ll.longitude, true)
+    }
+
+    /** Looks up the postcode/address and updates the open place card. */
+    private fun fillAddress(lat: Double, lon: Double, isPin: Boolean) {
+        searchExec.execute {
+            val r = Router.reverse(lat, lon) ?: return@execute
+            runOnUiThread {
+                val d = dest ?: return@runOnUiThread
+                if (d.lat != lat || d.lon != lon || mode != Mode.PLACE) return@runOnUiThread
+                val (pc, line) = r
+                dest = if (isPin) d.copy(name = pc.ifEmpty { line.substringBefore(",") }.ifEmpty { "Dropped pin" },
+                        label = pc.ifEmpty { "Dropped pin" }, sub = line + "\n" + String.format(Locale.US, "%.5f, %.5f", lat, lon))
+                    else d.copy(sub = listOf(line, pc).filter { it.isNotEmpty() }.joinToString(", "))
+                setSearchText(dest!!.title)
+                fillPlaceSheet()
+            }
+        }
     }
 
     private fun makePoiIcon(color: String, glyph: String): Bitmap {
