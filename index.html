@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RidePower BLE</title>
+<style>
+  :root{
+    --bg:#0e1116; --card:#171c24; --card2:#1f2733; --line:#2a3340;
+    --fg:#e8edf4; --muted:#8b97a7; --accent:#38bdf8; --accent2:#22c55e;
+    --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:14px;max-width:760px;margin:0 auto;-webkit-tap-highlight-color:transparent}
+  h1{font-size:18px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:12px}
+  button{font:inherit;font-weight:600;border:0;border-radius:11px;padding:12px 14px;
+    background:var(--accent);color:#04121c;cursor:pointer}
+  button.sec{background:var(--card2);color:var(--fg);border:1px solid var(--line)}
+  button.warn{background:var(--warn);color:#2a1a00}
+  button:disabled{opacity:.4}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:14px;margin:12px 0}
+  .pill{font-size:12px;padding:4px 9px;border-radius:999px;background:var(--card2);
+    border:1px solid var(--line);color:var(--muted)}
+  .pill.on{color:#04121c;background:var(--accent2);border-color:var(--accent2)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+  .stat{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .stat .v{font-size:22px;font-weight:700;margin-top:3px}
+  .stat .u{font-size:12px;color:var(--muted);font-weight:500}
+  .big .v{font-size:40px}
+  .big{grid-column:1/-1;text-align:center}
+  .fault0{color:var(--accent2)} .faultX{color:var(--danger)}
+  label.f{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:9px 0;border-bottom:1px solid var(--line)}
+  label.f:last-child{border-bottom:0}
+  label.f span{font-size:14px}
+  label.f small{color:var(--muted);display:block;font-size:11px}
+  input[type=number]{width:92px;font:inherit;text-align:right;background:#0b0f14;
+    color:var(--fg);border:1px solid var(--line);border-radius:9px;padding:8px}
+  #log{white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
+    background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:10px;
+    max-height:220px;overflow:auto;color:#aeb9c7}
+  summary{cursor:pointer;color:var(--muted);font-size:13px}
+  .note{font-size:12px;color:var(--muted)}
+  .danger{color:var(--danger)}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+  <h1>RidePower BLE</h1>
+  <div class="sub">Interoperability client for com.wx.dfw · service FFE0 / write FFE1 / notify FFE2</div>
+
+  <div class="row">
+    <button id="connect">Connect</button>
+    <button id="disconnect" class="sec" disabled>Disconnect</button>
+    <span id="state" class="pill">disconnected</span>
+    <span id="poll" class="pill">poll off</span>
+  </div>
+
+  <div id="noble" class="card" style="display:none">
+    <b class="danger">Web Bluetooth not available.</b>
+    <div class="note">Open this page in <b>Chrome on Android</b> over <b>https://</b> (or localhost).
+    iOS Safari and desktop Firefox don't support Web Bluetooth.</div>
+  </div>
+
+  <!-- LIVE -->
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b>Live data</b><span class="note">polls <code>55 00 00 A3 F8</code></span>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="stat big"><div class="k">Battery</div><div class="v"><span id="batt">–</span><span class="u"> V</span></div></div>
+      <div class="stat"><div class="k">Speed</div><div class="v" id="speed">–</div></div>
+      <div class="stat"><div class="k">Throttle</div><div class="v"><span id="thr">–</span><span class="u"> V</span></div></div>
+      <div class="stat"><div class="k">Ctrl temp</div><div class="v"><span id="ctemp">–</span><span class="u"> °C</span></div></div>
+      <div class="stat"><div class="k">Motor temp</div><div class="v"><span id="mtemp">–</span><span class="u"> °C</span></div></div>
+      <div class="stat"><div class="k">Fault</div><div class="v" id="fault">–</div></div>
+      <div class="stat"><div class="k">Work state</div><div class="v" id="work">–</div></div>
+      <div class="stat"><div class="k">Hall / Learn</div><div class="v" id="hall">–</div></div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b>Settings</b>
+      <div class="row">
+        <button id="read" class="sec" disabled>Read</button>
+        <button id="write" disabled>Write</button>
+      </div>
+    </div>
+    <div id="form" style="margin-top:6px"></div>
+    <div class="note" style="margin-top:8px">Read first, change only what you need, then Write.
+    Values are raw controller bytes (0–255) and match the official app's numbers. Stay within the
+    official app's ranges.</div>
+  </div>
+
+  <!-- ACTIONS -->
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b>Self-learning</b>
+      <button id="learn" class="warn" disabled>Start</button>
+    </div>
+    <div class="note danger" style="margin-top:6px">⚠ Spins the motor. Lift the rear wheel off the ground first.</div>
+  </div>
+
+  <details class="card">
+    <summary>Raw log</summary>
+    <div class="row" style="margin:8px 0"><button id="clear" class="sec">Clear</button>
+      <label class="note"><input type="checkbox" id="autopoll" checked> auto-poll realtime</label></div>
+    <div id="log"></div>
+  </details>
+
+  <div class="note" style="margin:18px 0 40px">
+    Protocol: header <code>0x55</code>, trailing byte = sum of all prior bytes &amp; 0xFF.
+    No pairing key, no encryption. See <code>docs/PROTOCOL.md</code>.
+  </div>
+
+<script>
+const UUID={svc:0xffe0, write:0xffe1, notify:0xffe2};
+const CMD={realtime:0x00, readParams:0x01, selfLearn:0x02};
+
+// 18 settings fields, in frame byte order (index 1..18)
+const FIELDS=[
+  ["limitCurrentVoltage","Limit current voltage"],
+  ["dcCurrent","DC current"],
+  ["limitMode","Limit mode","0=none, 1/2/3=limited"],
+  ["accelerateStrength","Accelerate strength"],
+  ["pas1Speed","PAS1 speed"],["pas2Speed","PAS2 speed"],["pas3Speed","PAS3 speed"],
+  ["pas4Speed","PAS4 speed"],["pas5Speed","PAS5 speed"],
+  ["regenBraking","Regen braking"],
+  ["phaseCurrent","Phase current"],
+  ["overVoltage","Over voltage"],
+  ["underVoltage","Under voltage"],
+  ["boost","Boost"],
+  ["stopOutputTemp","Stop-output temp"],
+  ["recoverOutputTemp","Recover-output temp"],
+  ["currentLimitingTemp","Current-limiting temp"],
+  ["rotorPolesPair","Rotor pole pairs"],
+];
+
+let device, writeChar, notifyChar, pollTimer, lastParams=null;
+
+const $=id=>document.getElementById(id);
+function log(msg){const el=$("log");el.textContent+=msg+"\n";el.scrollTop=el.scrollHeight;}
+const hex=a=>[...a].map(b=>b.toString(16).padStart(2,"0")).join(" ");
+
+function checksum(bytes){let s=0;for(const b of bytes)s=(s+b)&0xff;return s;}
+function frame(payload){const f=[0x55,...payload];f.push(checksum(f));return Uint8Array.from(f);}
+function queryFrame(cmd){return frame([cmd,0x00,0xA3]);}   // 55 CMD 00 A3 CHK
+function verify(a){return a.length>1 && a[0]===0x55 && checksum(a.slice(0,-1))===a[a.length-1];}
+
+// ---- build settings form ----
+const form=$("form");
+for(const [key,label,hint] of FIELDS){
+  const l=document.createElement("label"); l.className="f";
+  l.innerHTML=`<span>${label}${hint?`<small>${hint}</small>`:""}</span>`;
+  const i=document.createElement("input");
+  i.type="number"; i.min=0; i.max=255; i.step=1; i.id="f_"+key; i.disabled=true;
+  l.appendChild(i); form.appendChild(l);
+}
+
+// ---- connection ----
+if(!navigator.bluetooth){$("noble").style.display="block";}
+
+$("connect").onclick=async()=>{
+  try{
+    log("requesting device…");
+    device=await navigator.bluetooth.requestDevice({
+      acceptAllDevices:true, optionalServices:[UUID.svc]
+    });
+    device.addEventListener("gattserverdisconnected",onDisconnect);
+    log("connecting GATT…");
+    const server=await device.gatt.connect();
+    const svc=await server.getPrimaryService(UUID.svc);
+    writeChar=await svc.getCharacteristic(UUID.write);
+    notifyChar=await svc.getCharacteristic(UUID.notify);
+    await notifyChar.startNotifications();
+    notifyChar.addEventListener("characteristicvaluechanged",onNotify);
+    setConnected(true);
+    log("connected: "+(device.name||device.id));
+    startPolling();
+    setTimeout(readParams,400);   // auto-read current settings once
+  }catch(e){ log("ERROR: "+e.message); }
+};
+
+$("disconnect").onclick=()=>{ if(device&&device.gatt.connected) device.gatt.disconnect(); };
+
+function onDisconnect(){ setConnected(false); stopPolling(); log("disconnected"); }
+
+function setConnected(on){
+  $("state").textContent=on?"connected":"disconnected";
+  $("state").className="pill"+(on?" on":"");
+  $("connect").disabled=on; $("disconnect").disabled=!on;
+  $("read").disabled=!on; $("write").disabled=!on; $("learn").disabled=!on;
+  for(const [k] of FIELDS) $("f_"+k).disabled=!on;
+}
+
+// ---- writing ----
+async function send(bytes,tag){
+  if(!writeChar) throw new Error("not connected");
+  try{
+    if(writeChar.properties.write) await writeChar.writeValueWithResponse(bytes);
+    else await writeChar.writeValueWithoutResponse(bytes);
+  }catch(e){ // fallback to the other write type
+    try{ await writeChar.writeValueWithoutResponse(bytes); }
+    catch(e2){ log("write failed: "+e2.message); return; }
+  }
+  log("TX"+(tag?" "+tag:"")+": "+hex(bytes));
+}
+
+// ---- receiving ----
+function onNotify(ev){
+  const a=new Uint8Array(ev.target.value.buffer);
+  log("RX: "+hex(a));
+  if(!verify(a)){ log("  (bad header/checksum, ignored)"); return; }
+  if(a.length===13) parseRealtime(a);
+  else if(a.length===20) parseParams(a);
+}
+
+function parseRealtime(b){
+  const u16=(h,l)=>(b[h]<<8)|b[l];
+  const batt=u16(1,2)/7.6222222;
+  const thr=u16(3,4)*5/1024;
+  const speed=u16(5,6);
+  const hall=b[7]&0x07, learn=(b[7]>>7)&1;
+  const work=b[8], fault=b[9], ctemp=b[10], mtemp=b[11];
+  $("batt").textContent=batt.toFixed(1);
+  $("speed").textContent=speed;
+  $("thr").textContent=thr.toFixed(2);
+  $("ctemp").textContent=ctemp;
+  $("mtemp").textContent=mtemp;
+  const fe=$("fault"); fe.textContent=fault===0?"OK":("#"+fault);
+  fe.className="v "+(fault===0?"fault0":"faultX");
+  $("work").textContent=work;
+  $("hall").textContent=hall+(learn?" · LEARNING":"");
+}
+
+function parseParams(b){
+  lastParams=b.slice();          // keep full frame so unread fields are preserved
+  FIELDS.forEach((f,i)=>{ $("f_"+f[0]).value=b[i+1]; });
+  log("  parameters loaded");
+}
+
+// ---- actions ----
+function readParams(){ send(queryFrame(CMD.readParams),"read-params"); }
+
+$("read").onclick=readParams;
+
+$("write").onclick=()=>{
+  // start from last read frame (so unseen bytes keep their real values), apply edits
+  const payload = lastParams ? Array.from(lastParams.slice(1,19)) : new Array(18).fill(0);
+  FIELDS.forEach((f,i)=>{
+    const v=parseInt($("f_"+f[0]).value,10);
+    payload[i]=isNaN(v)?payload[i]:(v&0xff);
+  });
+  if(!lastParams && !confirm("You haven't read current settings yet. Writing now sends 0 for every field you didn't set. Continue?")) return;
+  send(frame(payload),"write-params");
+  setTimeout(readParams,500);    // read back to confirm
+};
+
+$("learn").onclick=()=>{
+  if(!confirm("Start self-learning? The motor will spin. Make sure the rear wheel is lifted and clear.")) return;
+  send(queryFrame(CMD.selfLearn),"self-learn");
+};
+
+// ---- polling ----
+function startPolling(){
+  stopPolling();
+  pollTimer=setInterval(()=>{ if($("autopoll").checked) send(queryFrame(CMD.realtime)); },700);
+  $("poll").textContent="poll on"; $("poll").className="pill on";
+}
+function stopPolling(){ if(pollTimer)clearInterval(pollTimer); pollTimer=null;
+  $("poll").textContent="poll off"; $("poll").className="pill"; }
+
+$("clear").onclick=()=>$("log").textContent="";
+</script>
+</body>
+</html>
