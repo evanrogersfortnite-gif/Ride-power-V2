@@ -50,6 +50,7 @@ import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
@@ -60,6 +61,12 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+
+private val POI_STYLE = mapOf(
+    "shop" to ("#1A73E8" to "🛒"), "food" to ("#E8710A" to "🍴"), "health" to ("#D93025" to "✚"),
+    "fuel" to ("#0E7C86" to "⚡"), "bike" to ("#188038" to "🚲"), "service" to ("#5F6368" to "£"),
+    "place" to ("#7B61FF" to "★"))
+private val POI_RANK = mapOf("shop" to 1, "food" to 2, "bike" to 2, "fuel" to 3, "health" to 3, "service" to 4, "place" to 5)
 
 /**
  * VoltRoute home screen — a Google-Maps-style e-bike navigator.
@@ -93,6 +100,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private val exec = Executors.newSingleThreadExecutor()        // routing
     private val searchExec = Executors.newCachedThreadPool()      // type-ahead (parallel, stale ones abort)
     private val limitExec = Executors.newSingleThreadExecutor()   // speed limits
+    private val poiExec = Executors.newSingleThreadExecutor()     // shops/places on the map
+    private var srcPoi: GeoJsonSource? = null
+    @Volatile private var pois: List<Router.Poi> = emptyList()
+    private var poiBox: DoubleArray? = null                      // s,w,n,e already loaded
+    private var poiLoading = false
     private val ui = Handler(Looper.getMainLooper())
     private var sbH = 0
 
@@ -218,8 +230,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
         }
         m.addOnCameraMoveListener { updateCompass(); positionBubbles() }
-        m.addOnCameraIdleListener { positionBubbles() }
-        m.addOnMapClickListener { if (mode == Mode.BROWSE || mode == Mode.PLACE) { hideResults(); hideKeyboard() }; false }
+        m.addOnCameraIdleListener { positionBubbles(); loadPois() }
+        m.addOnMapClickListener { ll ->
+            if (mode == Mode.BROWSE || mode == Mode.PLACE) {
+                hideResults(); hideKeyboard()
+                val hit = poiAt(ll)
+                if (hit != null) { selectPlace(Router.Place(hit.name, hit.lat, hit.lon, hit.name, hit.sub, hit.cat)); return@addOnMapClickListener true }
+            }
+            false
+        }
         m.setStyle(Style.Builder().fromUri(STYLE_URL)) { st -> addLayers(st) }
     }
 
@@ -230,6 +249,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         srcDest = GeoJsonSource("dest").also { it.setGeoJson(empty); st.addSource(it) }
         srcMe = GeoJsonSource("me").also { it.setGeoJson(empty); st.addSource(it) }
         st.addImage("nav-arrow", makeArrow())
+        for ((g, v) in POI_STYLE) st.addImage("poi-$g", makePoiIcon(v.first, v.second))
+        srcPoi = GeoJsonSource("pois").also { it.setGeoJson(poiJson(pois)); st.addSource(it) }
         val rnd = arrayOf(PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND))
         st.addLayer(LineLayer("route-alt-casing", "route-alt").withProperties(PropertyFactory.lineColor("#8FA3BC"), PropertyFactory.lineWidth(10f), *rnd))
         st.addLayer(LineLayer("route-alt-l", "route-alt").withProperties(PropertyFactory.lineColor("#BCCBDF"), PropertyFactory.lineWidth(7f), *rnd))
@@ -249,6 +270,14 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
             PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconSize(0.95f), PropertyFactory.visibility(Property.NONE)))
+        st.addLayerBelow(SymbolLayer("poi-l", "pois").withProperties(
+            PropertyFactory.iconImage(Expression.get("icon")), PropertyFactory.iconSize(0.5f),
+            PropertyFactory.textField(Expression.get("name")), PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+            PropertyFactory.textSize(12.5f), PropertyFactory.textColor(Expression.toColor(Expression.get("color"))),
+            PropertyFactory.textHaloColor("#FFFFFF"), PropertyFactory.textHaloWidth(1.6f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(1.2f, 0f)),
+            PropertyFactory.textMaxWidth(9f), PropertyFactory.textOptional(true),
+            PropertyFactory.symbolSortKey(Expression.get("rank"))).also { it.setMinZoom(15.5f) }, "route-alt-casing")
         if (trafficOn) addTrafficLayer(st)
         redrawRoutes()
         lastLoc?.let { srcMe?.setGeoJson(pointJson(it.latitude, it.longitude)) }
@@ -571,7 +600,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
             if (!alive()) return@execute
             val deep = Router.smartSearch(q, near, true, alive)
-            runOnUiThread { if (seq == searchSeq) showPlaces(deep, near, q, null, true) }
+            runOnUiThread {
+                if (seq != searchSeq) return@runOnUiThread
+                val best = localFirst(deep, near)
+                if (enter && best.isNotEmpty()) selectPlace(best[0])      // search key: straight to the top match
+                else showPlaces(deep, near, q, null, true)
+            }
         }
     }
 
@@ -597,7 +631,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
         resultsCard.removeAllViews()
         if (header != null) resultsCard.addView(sectionLabel(header))
-        val list = if (near != null && query.isEmpty()) places.sortedBy { Geo.dist(near.lat, near.lon, it.lat, it.lon) } else places
+        val sorted = if (near != null && query.isEmpty()) places.sortedBy { Geo.dist(near.lat, near.lon, it.lat, it.lon) } else places
+        val list = localFirst(sorted, near)
         list.take(7).forEachIndexed { i, p ->
             if (i > 0) resultsCard.addView(divider())
             resultsCard.addView(placeRow(p, near, query, catEmoji(p.cat)))
@@ -639,6 +674,13 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         return sp
     }
 
+    /** If anything is within ~25 miles, drop results more than ~60 miles away (other cities' branches). */
+    private fun localFirst(places: List<Router.Place>, near: Router.Pt?): List<Router.Place> {
+        if (near == null) return places
+        val d = places.map { Geo.dist(near.lat, near.lon, it.lat, it.lon) / 1609.34 }
+        return if (d.any { it < 25 }) places.filterIndexed { i, _ -> d[i] < 60 } else places
+    }
+
     private fun showResultsMessage(msg: String) {
         resultsCard.removeAllViews()
         resultsCard.addView(TextView(this).apply { text = msg; textSize = 15f; setTextColor(MUTED); setPadding(dp(18), dp(16), dp(18), dp(16)) })
@@ -659,6 +701,68 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun setSearchText(t: String) {
         suppressWatcher = true; searchBar.setText(t); searchBar.setSelection(t.length); suppressWatcher = false
         clearBtn.visibility = if (t.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    // ============================ shops & places on the map ============================
+    private fun loadPois() {
+        val m = map ?: return
+        if (m.cameraPosition.zoom < 15.0 || poiLoading) return
+        val b = m.projection.visibleRegion.latLngBounds
+        val have = poiBox
+        if (have != null && b.latitudeSouth >= have[0] && b.longitudeWest >= have[1] && b.latitudeNorth <= have[2] && b.longitudeEast <= have[3]) return
+        val dLat = (b.latitudeNorth - b.latitudeSouth) * 0.3; val dLon = (b.longitudeEast - b.longitudeWest) * 0.3
+        val box = doubleArrayOf(b.latitudeSouth - dLat, b.longitudeWest - dLon, b.latitudeNorth + dLat, b.longitudeEast + dLon)
+        if (box[2] - box[0] > 0.08 || box[3] - box[1] > 0.12) return
+        poiLoading = true
+        poiExec.execute {
+            val got = Router.fetchPois(box[0], box[1], box[2], box[3])
+            runOnUiThread {
+                poiLoading = false
+                if (got.isEmpty()) return@runOnUiThread
+                pois = got; poiBox = box
+                srcPoi?.setGeoJson(poiJson(got))
+            }
+        }
+    }
+
+    private fun poiJson(list: List<Router.Poi>): String {
+        val fs = JSONArray()
+        for (p in list) {
+            val st = POI_STYLE[p.group] ?: POI_STYLE.getValue("place")
+            fs.put(JSONObject().put("type", "Feature")
+                .put("geometry", JSONObject().put("type", "Point").put("coordinates", JSONArray().put(p.lon).put(p.lat)))
+                .put("properties", JSONObject().put("name", p.name).put("icon", "poi-${p.group}")
+                    .put("color", st.first).put("rank", POI_RANK[p.group] ?: 5)))
+        }
+        return JSONObject().put("type", "FeatureCollection").put("features", fs).toString()
+    }
+
+    /** Nearest drawn place within a finger's width of the tap. */
+    private fun poiAt(ll: LatLng): Router.Poi? {
+        val m = map ?: return null
+        if (m.cameraPosition.zoom < 15.5) return null
+        val tap = m.projection.toScreenLocation(ll)
+        var best: Router.Poi? = null; var bestD = dp(28).toFloat()
+        for (p in pois) {
+            val pt = m.projection.toScreenLocation(LatLng(p.lat, p.lon))
+            val d = Math.hypot((pt.x - tap.x).toDouble(), (pt.y - tap.y).toDouble()).toFloat()
+            if (d < bestD) { bestD = d; best = p }
+        }
+        return best
+    }
+
+    private fun makePoiIcon(color: String, glyph: String): Bitmap {
+        val sz = 72
+        val bmp = Bitmap.createBitmap(sz, sz, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.WHITE; c.drawCircle(sz / 2f, sz / 2f, sz / 2f, paint)
+        paint.color = Color.parseColor(color); c.drawCircle(sz / 2f, sz / 2f, sz / 2f - 5f, paint)
+        paint.color = Color.WHITE; paint.textSize = 36f; paint.textAlign = Paint.Align.CENTER
+        paint.typeface = Typeface.DEFAULT_BOLD
+        val y = sz / 2f - (paint.descent() + paint.ascent()) / 2f
+        c.drawText(glyph, sz / 2f, y, paint)
+        return bmp
     }
 
     // ============================ place ============================

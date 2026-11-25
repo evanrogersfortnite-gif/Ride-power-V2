@@ -85,6 +85,49 @@ object Router {
         } catch (e: Exception) { emptyList() }
     }
 
+    // ===================== places on the map =====================
+    /** A named place to draw on the map. group: shop/food/health/fuel/bike/service/place */
+    data class Poi(val name: String, val lat: Double, val lon: Double, val cat: String, val group: String, val sub: String)
+
+    fun poiGroup(key: String, v: String): String = when {
+        key == "shop" && v == "bicycle" -> "bike"
+        key == "shop" -> "shop"
+        v in setOf("restaurant", "fast_food", "cafe", "pub", "bar", "ice_cream", "food_court") -> "food"
+        v in setOf("pharmacy", "hospital", "doctors", "dentist", "clinic") -> "health"
+        v in setOf("fuel", "charging_station") -> "fuel"
+        v in setOf("bicycle_parking", "bicycle_rental", "bicycle_repair_station") -> "bike"
+        v in setOf("bank", "atm", "post_office") -> "service"
+        else -> "place"
+    }
+
+    /** Named shops/food/amenities inside a bounding box (OpenStreetMap via Overpass). */
+    fun fetchPois(s: Double, w: Double, n: Double, e: Double): List<Poi> {
+        return try {
+            val bb = "$s,$w,$n,$e"
+            val q = "[out:json][timeout:12];(" +
+                    "nwr[\"name\"][\"shop\"]($bb);" +
+                    "nwr[\"name\"][\"amenity\"~\"^(restaurant|fast_food|cafe|pub|bar|ice_cream|pharmacy|hospital|doctors|dentist|" +
+                    "fuel|charging_station|bank|atm|post_office|bicycle_rental|library|cinema|theatre|marketplace)$\"]($bb);" +
+                    ");out center 400;"
+            val els = JSONObject(httpGet("https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(q, "UTF-8"), 6000, 15000))
+                .getJSONArray("elements")
+            val out = ArrayList<Poi>()
+            for (i in 0 until els.length()) {
+                val el = els.getJSONObject(i)
+                val t = el.optJSONObject("tags") ?: continue
+                val name = t.optString("name", ""); if (name.isEmpty()) continue
+                val lat = if (el.has("lat")) el.getDouble("lat") else el.optJSONObject("center")?.optDouble("lat") ?: continue
+                val lon = if (el.has("lon")) el.getDouble("lon") else el.optJSONObject("center")?.optDouble("lon") ?: continue
+                val key = if (t.has("shop")) "shop" else "amenity"
+                val v = t.optString(key)
+                val street = listOf(t.optString("addr:housenumber"), t.optString("addr:street")).filter { it.isNotEmpty() }.joinToString(" ")
+                val sub = listOf(street, t.optString("addr:city"), t.optString("addr:postcode")).filter { it.isNotEmpty() }.joinToString(", ")
+                out.add(Poi(name, lat, lon, v, poiGroup(key, v), sub))
+            }
+            out
+        } catch (e: Exception) { emptyList() }
+    }
+
     // ===================== smart search =====================
     private val ALIASES = mapOf(
         "coop" to "co-op", "co op" to "co-op", "tescos" to "tesco", "sainsburys" to "sainsbury's",
@@ -163,7 +206,8 @@ object Router {
             }
             if (street != null && norm(p.subtitle).contains(street)) sc += 14
             if (streetPt != null) sc -= minOf(20.0, dist(streetPt, p) / 150.0)        // near the named street
-            if (near != null) sc -= minOf(15.0, dist(near, p) / 1609.0 * 1.2)          // closer is better
+            if (near != null) { val mi = dist(near, p) / 1609.0
+                sc -= if (mi < 30) mi * 1.2 else 36 + minOf(30.0, (mi - 30) / 10) }  // local first, far away sinks
             return sc
         }
         return places.sortedByDescending { score(it) }
