@@ -160,6 +160,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private lateinit var myLocBtn: TextView
     private lateinit var gearBtn: TextView
     private lateinit var speedCard: LinearLayout
+    private lateinit var hud: LinearLayout
+    private lateinit var battCard: LinearLayout
+    private lateinit var battFill: View
+    private lateinit var tvRange: TextView
     private lateinit var tvSpeed: TextView
     private lateinit var tvLimit: TextView
     private lateinit var sheet: LinearLayout
@@ -211,7 +215,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         setContentView(frame)
 
         val known = estimator.current
-        if (known >= 0) { lastPct = known; tvBatt.text = battText(known) }
+        if (known >= 0) { lastPct = known }
+        showBatt(lastPct, false)
         applyMode()
         requestPerms()
         // check for a newer version a few seconds after opening
@@ -354,12 +359,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             setOnClickListener { clearSearch() }
         }
         pill.addView(clearBtn)
-        tvBatt = TextView(this).apply {
-            text = "🔋 –"; textSize = 13f; setTextColor(MUTED); setTypeface(null, Typeface.BOLD)
-            setPadding(dp(11), dp(8), dp(11), dp(8)); background = shape(CHIPBG, dp(18))
-            setOnClickListener { showBatteryDetails() }
-        }
-        pill.addView(tvBatt)
         topBox.addView(pill, LinearLayout.LayoutParams(MATCH, dp(60)))
 
         chipsScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false }
@@ -457,7 +456,25 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             visibility = View.GONE
         }
         speedCard.addView(tvLimit, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(12) })
-        frame.addView(speedCard, FrameLayout.LayoutParams(WRAP, WRAP).apply {
+        // battery block, floating next to the speed
+        battCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            background = shape(Color.WHITE, dp(20)); elevation = dp(5).toFloat()
+            setOnClickListener { showBatteryDetails() }
+        }
+        tvBatt = TextView(this).apply { text = "–%"; textSize = 24f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        battCard.addView(tvBatt)
+        val track = FrameLayout(this).apply { background = shape(0xFFE8EAED.toInt(), dp(3)) }
+        battFill = View(this).apply { background = shape(MUTED, dp(3)) }
+        track.addView(battFill, FrameLayout.LayoutParams(0, MATCH))
+        battCard.addView(track, LinearLayout.LayoutParams(dp(64), dp(6)).apply { topMargin = dp(3); bottomMargin = dp(4) })
+        tvRange = TextView(this).apply { text = "– mi"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER }
+        battCard.addView(tvRange)
+        hud = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        hud.addView(speedCard)
+        hud.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
+        frame.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP).apply {
             gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(14), 0, 0, dp(22))
         })
     }
@@ -551,7 +568,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(chipsScroll, mode == Mode.BROWSE && resultsCard.visibility != View.VISIBLE)
         vis(routeCard, mode == Mode.ROUTES)
         vis(sheet, mode == Mode.PLACE || mode == Mode.ROUTES || mode == Mode.ARRIVED)
-        vis(speedCard, mode == Mode.BROWSE || mode == Mode.NAV)
+        vis(hud, mode == Mode.BROWSE || mode == Mode.NAV)
         vis(myLocBtn, mode == Mode.BROWSE)
         vis(gearBtn, mode == Mode.BROWSE)
         vis(trafficBtn, mode != Mode.ARRIVED)
@@ -559,8 +576,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(navBottom, mode == Mode.NAV)
         vis(recenterPill, mode == Mode.NAV && !follow)
         if (mode != Mode.BROWSE && mode != Mode.PLACE) resultsCard.visibility = View.GONE
-        (speedCard.layoutParams as FrameLayout.LayoutParams).bottomMargin = if (mode == Mode.NAV) dp(124) else dp(22)
-        speedCard.requestLayout()
+        (hud.layoutParams as FrameLayout.LayoutParams).bottomMargin = if (mode == Mode.NAV) dp(124) else dp(22)
+        hud.requestLayout()
         setNavLayers(mode == Mode.NAV)
         val st = map?.style
         st?.getLayer("route-alt-l")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
@@ -1241,7 +1258,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onLocationChanged(loc: Location) {
         val prevOdo = odoLoc
         if (BleManager.connected && loc.hasSpeed() && loc.speed > 1.2f && loc.accuracy < 30f) {
-            if (prevOdo != null) range.addMiles(prevOdo.distanceTo(loc) / 1609.34)
+            if (prevOdo != null) range.addMiles(prevOdo.distanceTo(loc) / 1609.34, (loc.time - prevOdo.time) / 1000.0)
             odoLoc = loc
         } else odoLoc = null
         lastLoc = loc
@@ -1306,8 +1323,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         if (pct >= 0) {
             lastPct = pct; range.onSoc(pct)
             val p = pct.roundToInt()
-            tvBatt.text = battText(pct)
-            tvBatt.setTextColor(when { p > 50 -> GREEN; p > 20 -> AMBER; else -> RED })
+            showBatt(pct, true)
             val warnAt = prefs().getInt("lowBatt", 15)
             if (warnAt > 0 && p <= warnAt && !lowBattWarned) {
                 lowBattWarned = true
@@ -1318,10 +1334,28 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
-        if (!connected) { tvBatt.text = if (lastPct >= 0) battText(lastPct) else "🔋 –"; tvBatt.setTextColor(MUTED) }
+        if (!connected) showBatt(lastPct, false)
     }
 
-    private fun battText(pct: Double) = "🔋 ${pct.roundToInt()}% · ${range.rangeMiles(pct).roundToInt()} mi"
+    private fun rangeMph() = prefs().getInt("rangeMph", 15)
+
+    /** Battery block: big %, red→green live bar, and miles left at your chosen average speed. */
+    private fun showBatt(pct: Double, live: Boolean) {
+        if (pct < 0) {
+            tvBatt.text = "–%"; tvBatt.setTextColor(MUTED); tvRange.text = "no bike"
+            (battFill.layoutParams as FrameLayout.LayoutParams).width = 0; battFill.requestLayout(); return
+        }
+        val p = pct.coerceIn(0.0, 100.0)
+        val hue = (p / 100.0 * 120.0).toFloat()                  // 0 = red, 60 = amber, 120 = green
+        val col = Color.HSVToColor(floatArrayOf(hue, 0.85f, if (live) 0.80f else 0.55f))
+        tvBatt.text = "${p.roundToInt()}%"
+        tvBatt.setTextColor(if (live) INK else MUTED)
+        battFill.background = shape(col, dp(3))
+        (battFill.layoutParams as FrameLayout.LayoutParams).width = (dp(64) * p / 100.0).roundToInt().coerceAtLeast(dp(3))
+        battFill.requestLayout()
+        val mi = range.rangeAt(p, rangeMph().toDouble())
+        tvRange.text = "≈${mi.roundToInt()} mi @${rangeMph()}"
+    }
 
     private fun showBatteryDetails() {
         val pct = if (lastPct >= 0) "${lastPct.roundToInt()}%" else "unknown"
@@ -1465,9 +1499,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         if (p.getBoolean("resetLearners", false)) {
             p.edit().remove("resetLearners").apply()
             estimator = BatteryEstimator(this); range = RangeLearner(this); learner = TripLearner(this)
-            lastPct = -1.0; tvBatt.text = "🔋 –"
+            lastPct = -1.0
         }
         muted = p.getBoolean("muted", false)
+        showBatt(lastPct, BleManager.connected)
         if (::muteBtn.isInitialized) muteBtn.text = if (muted) "🔇" else "🔊"
         if (mode != Mode.ROUTES && mode != Mode.NAV) routeProfile = p.getString("defProfile", "trekking") ?: "trekking"
         if (limitMph != null) tvLimit.visibility = if (p.getBoolean("showLimit", true)) View.VISIBLE else View.GONE
