@@ -45,6 +45,8 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.FillExtrusionLayer
+import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -260,6 +262,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun addLayers(st: Style) {
+        try { polishBasemap(st) } catch (_: Exception) {}
         val empty = fc(emptyList())
         srcAlt = GeoJsonSource("route-alt").also { it.setGeoJson(empty); st.addSource(it) }
         srcSel = GeoJsonSource("route-sel").also { it.setGeoJson(empty); st.addSource(it) }
@@ -286,7 +289,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
             PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
             PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
-            PropertyFactory.iconSize(0.95f), PropertyFactory.visibility(Property.NONE)))
+            PropertyFactory.iconSize(1.2f), PropertyFactory.visibility(Property.NONE)))
         st.addLayerBelow(SymbolLayer("poi-l", "pois").withProperties(
             PropertyFactory.iconImage(Expression.get("icon")), PropertyFactory.iconSize(0.5f),
             PropertyFactory.textField(Expression.get("name")), PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
@@ -301,6 +304,69 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         lastLoc?.let { srcMe?.setGeoJson(pointJson(it.latitude, it.longitude)) }
         dest?.let { srcDest?.setGeoJson(pointJson(it.lat, it.lon)) }
         setNavLayers(mode == Mode.NAV)
+    }
+
+    /**
+     * Restyles the base map to feel cleaner, closer to Google Maps: wider, clearer streets,
+     * soft light buildings, slightly bigger street names.
+     */
+    private fun polishBasemap(st: Style) {
+        val dark = appliedStyle.endsWith("dark")
+        fun z(vararg st: Pair<Float, Float>) = Expression.interpolate(Expression.exponential(1.6f), Expression.zoom(),
+            *st.map { Expression.stop(it.first, it.second) }.toTypedArray())
+        for (l in st.layers) {
+            val id = l.id
+            when (l) {
+                is LineLayer -> {
+                    if (l.sourceLayer != "transportation") continue
+                    if (id.contains("rail") || id.contains("path") || id.contains("pedestrian") || id.contains("track")
+                        || id.contains("ferry") || id.contains("aerialway") || id.contains("area")) continue
+                    val casing = id.contains("casing")
+                    val w = when {
+                        id.contains("motorway") || id.contains("trunk") || id.contains("primary") ->
+                            z(10f to 1.5f, 13f to 3f, 15f to 7f, 17f to 18f, 19f to 44f)
+                        id.contains("secondary") || id.contains("tertiary") ->
+                            z(11f to 1f, 13f to 2.2f, 15f to 6f, 17f to 15f, 19f to 38f)
+                        id.contains("minor") || id.contains("street") || id.contains("link") ->
+                            z(13f to 0.8f, 14f to 2f, 15f to 4.5f, 17f to 12f, 19f to 30f)
+                        id.contains("service") -> z(14f to 0.8f, 16f to 3f, 18f to 9f, 19f to 14f)
+                        else -> null
+                    } ?: continue
+                    if (casing) {
+                        // casing = road width plus a thin edge
+                        val c = when {
+                            id.contains("motorway") || id.contains("trunk") || id.contains("primary") ->
+                                z(10f to 2.5f, 13f to 4.5f, 15f to 9.5f, 17f to 22f, 19f to 50f)
+                            id.contains("secondary") || id.contains("tertiary") ->
+                                z(11f to 2f, 13f to 3.5f, 15f to 8f, 17f to 18.5f, 19f to 43f)
+                            id.contains("service") -> z(14f to 1.5f, 16f to 4.5f, 18f to 11f, 19f to 17f)
+                            else -> z(13f to 1.6f, 14f to 3f, 15f to 6f, 17f to 14.5f, 19f to 34f)
+                        }
+                        l.setProperties(PropertyFactory.lineWidth(c))
+                        if (!dark) l.setProperties(PropertyFactory.lineColor("#D3D6DB"))
+                    } else {
+                        l.setProperties(PropertyFactory.lineWidth(w))
+                        if (!dark && (id.contains("minor") || id.contains("street") || id.contains("service")
+                                    || id.contains("secondary") || id.contains("tertiary")))
+                            l.setProperties(PropertyFactory.lineColor("#FFFFFF"))
+                    }
+                }
+                is FillExtrusionLayer -> if (l.sourceLayer == "building") {
+                    l.setProperties(
+                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else "#ECEDF0"),
+                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.8f else 0.72f))
+                }
+                is FillLayer -> if (l.sourceLayer == "building") {
+                    l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#E8E9EC"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DCDEE2"))
+                }
+                is SymbolLayer -> if (l.sourceLayer == "transportation_name") {
+                    l.setProperties(PropertyFactory.textSize(z(13f to 11f, 16f to 13.5f, 18f to 16f)),
+                        PropertyFactory.textHaloWidth(1.8f))
+                }
+            }
+        }
+        // softer, Google-like land colour on the standard style
+        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F5F5F3"))
     }
 
     /** Google-style navigation chevron. */
