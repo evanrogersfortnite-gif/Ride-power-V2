@@ -47,6 +47,8 @@ object BleManager {
 
     private val handler = Handler(Looper.getMainLooper())
     private var appCtx: Context? = null
+    /** Rider's voltage correction (true volts / reported volts), set in Settings. */
+    @Volatile var voltCal = 1.0
     private var adapter: BluetoothAdapter? = null
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
@@ -65,6 +67,7 @@ object BleManager {
     fun init(ctx: Context) {
         if (appCtx == null) {
             appCtx = ctx.applicationContext
+            voltCal = appCtx!!.getSharedPreferences("app", Context.MODE_PRIVATE).getFloat("voltCal", 1f).toDouble()
             adapter = (appCtx!!.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         }
     }
@@ -219,7 +222,7 @@ object BleManager {
         when (b.size) {
             13 -> {
                 val d = Realtime(
-                    batteryV = u16(b, 1, 2) / 7.6222222,
+                    batteryV = u16(b, 1, 2) / 7.6222222 * voltCal,
                     throttleV = u16(b, 3, 4) * 5.0 / 1024.0,
                     speedRpm = u16(b, 5, 6),
                     hall = u(b, 7) and 0x07,

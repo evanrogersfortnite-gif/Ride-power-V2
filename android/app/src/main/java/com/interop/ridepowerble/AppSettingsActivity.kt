@@ -79,7 +79,13 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             val rng = RangeLearner(this@AppSettingsActivity)
             choice("🔌", "Battery voltage", "packSeries", listOf("Auto-detect" to 0, "36 V (10S, 42 V full)" to 10,
                 "48 V (13S, 54.6 V full)" to 13, "52 V (14S, 58.8 V full)" to 14, "60 V (16S, 67.2 V full)" to 16,
-                "72 V (20S, 84 V full)" to 20), 0) { prefs().edit().putBoolean("resetLearners", true).apply() }
+                "72 V (20S, 84 V full)" to 20), 0) {
+                getSharedPreferences("battery", Context.MODE_PRIVATE).edit().remove("soc").remove("series").apply()
+                prefs().edit().putBoolean("resetLearners", true).apply() }
+            line()
+            val rtV = BleManager.lastRealtime?.batteryV
+            row("🎯", "Voltage calibration", (if (rtV != null) "Reading ${"%.1f".format(rtV)} V" else "Connect the bike to calibrate") +
+                    (if (BleManager.voltCal != 1.0) " · corrected ×${"%.3f".format(BleManager.voltCal)}" else "")) { calibrateVolts() }
             line()
             choice("⚡", "Battery capacity", "packAh10", listOf("Not set" to 0) +
                 listOf(10, 12, 13, 15, 17, 17.5, 20, 21, 24, 25, 28, 30, 35, 40, 50).map {
@@ -184,6 +190,35 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         getSharedPreferences("range", Context.MODE_PRIVATE).edit().clear().apply()
         prefs().edit().putBoolean("resetLearners", true).apply()
         toast("Battery learning reset"); build()
+    }
+
+    /** Match the app's voltage to the bike display / a meter. */
+    private fun calibrateVolts() {
+        val rt = BleManager.lastRealtime
+        if (rt == null || !BleManager.connected) { toast("Connect the bike first"); return }
+        val raw = rt.batteryV / BleManager.voltCal
+        val input = EditText(this).apply {
+            hint = "e.g. 54.2"; setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
+        AlertDialog.Builder(this).setTitle("Voltage calibration")
+            .setMessage("VoltRoute reads ${"%.1f".format(rt.batteryV)} V right now.\n\nWith the bike standing still (no throttle), enter the voltage your bike's display or a meter shows:")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val v = input.text.toString().replace(',', '.').toDoubleOrNull()
+                if (v == null || raw <= 0) { toast("Enter a number like 54.2"); return@setPositiveButton }
+                val f = v / raw
+                if (f < 0.85 || f > 1.15) { toast("That's more than 15% off — check the number"); return@setPositiveButton }
+                BleManager.voltCal = f
+                prefs().edit().putFloat("voltCal", f.toFloat()).apply()
+                getSharedPreferences("battery", Context.MODE_PRIVATE).edit().remove("soc").apply()
+                prefs().edit().putBoolean("resetLearners", true).apply()
+                toast("Calibrated"); build()
+            }
+            .setNeutralButton("Reset") { _, _ ->
+                BleManager.voltCal = 1.0; prefs().edit().remove("voltCal").apply(); build() }
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun editKey() {

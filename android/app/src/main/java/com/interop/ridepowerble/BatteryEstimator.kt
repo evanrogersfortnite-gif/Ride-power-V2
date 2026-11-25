@@ -41,6 +41,11 @@ class BatteryEstimator(ctx: Context) {
     private var minRestV = prefs.getFloat("minRestV", 999f).toDouble()
     private var soc = prefs.getFloat("soc", -1f).toDouble()        // -1 = uninitialised
     private var lastSpeed = 0
+    // Throttle signal at rest. Hall throttles idle around 0.8 V, not 0 V, so "throttle applied"
+    // must be measured against this, otherwise the bike always looks under load.
+    private var idleThrottle = prefs.getFloat("thrIdle", -1f).toDouble()
+    private var restCount = 0
+    private var firstSample = true
     private var lastSaveMs = 0L
 
     val learnedSeries get() = series
@@ -54,8 +59,10 @@ class BatteryEstimator(ctx: Context) {
 
         val accel = speedRpm - lastSpeed
         lastSpeed = speedRpm
-        // "under load": throttle applied, or clearly accelerating -> voltage is sagging
-        val underLoad = throttleV > 0.20 || accel > 30
+        if (idleThrottle < 0 || throttleV < idleThrottle) idleThrottle = throttleV
+        // "under load": throttle applied (above its resting level), or clearly accelerating -> voltage is sagging
+        val underLoad = throttleV > idleThrottle + 0.25 || accel > 30
+        restCount = if (!underLoad && speedRpm == 0) restCount + 1 else 0
 
         // learn series-cell count from the highest near-rest voltage ever seen
         if (!underLoad && batteryV > maxRestV) { maxRestV = batteryV }
@@ -74,8 +81,14 @@ class BatteryEstimator(ctx: Context) {
         val perCell = batteryV / series
         val target = ocvToSoc(perCell)
 
+        val wasFirst = firstSample
+        firstSample = false
         soc = when {
             soc < 0 -> target                                   // first ever sample
+            // first reading after connecting at rest is the most accurate (battery has rested / charged)
+            wasFirst && !underLoad && speedRpm == 0 -> target
+            // parked and clearly wrong (e.g. after changing the battery setting): converge quickly
+            restCount >= 4 && abs(target - soc) > 8 -> soc + (target - soc) * 0.25
             underLoad -> (soc - 0.015).coerceAtLeast(0.0)       // hold (tiny drain) during sag
             else -> soc + (target - soc) * 0.03                 // slow correction at rest/coast
         }.coerceIn(0.0, 100.0)
@@ -107,6 +120,7 @@ class BatteryEstimator(ctx: Context) {
             .putFloat("maxRestV", maxRestV.toFloat())
             .putFloat("minRestV", if (minRestV < 900) minRestV.toFloat() else 999f)
             .putFloat("soc", soc.toFloat())
+            .putFloat("thrIdle", idleThrottle.toFloat())
             .apply()
     }
 
