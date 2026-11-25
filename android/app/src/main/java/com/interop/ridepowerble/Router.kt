@@ -122,7 +122,7 @@ object Router {
                     "nwr[\"name\"][\"amenity\"~\"^(restaurant|fast_food|cafe|pub|bar|ice_cream|pharmacy|hospital|doctors|dentist|" +
                     "fuel|charging_station|bank|atm|post_office|bicycle_rental|library|cinema|theatre|marketplace)$\"]($bb);" +
                     ");out center 400;"
-            val els = JSONObject(httpGet("https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(q, "UTF-8"), 6000, 15000))
+            val els = JSONObject(overpass(q, 6000, 15000))
                 .getJSONArray("elements")
             val out = ArrayList<Poi>()
             for (i in 0 until els.length()) {
@@ -239,7 +239,7 @@ object Router {
             if (pat.isEmpty()) return emptyList()
             val q = "[out:json][timeout:10];nwr(around:8000,${around.lat},${around.lon})[\"name\"~\"$pat\",i]" +
                     "[~\"^(shop|amenity|leisure|tourism|office|craft)$\"~\".\"];out center tags 40;"
-            val els = JSONObject(httpGet("https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(q, "UTF-8"), 5000, 9000)).getJSONArray("elements")
+            val els = JSONObject(overpass(q, 5000, 9000)).getJSONArray("elements")
             val out = ArrayList<Place>()
             for (i in 0 until els.length()) {
                 val e = els.getJSONObject(i)
@@ -283,7 +283,7 @@ object Router {
     fun speedLimitMph(lat: Double, lon: Double): Int? {
         return try {
             val q = "[out:json][timeout:8];way(around:20,$lat,$lon)[highway][maxspeed];out tags 3;"
-            val body = httpGet("https://overpass-api.de/api/interpreter?data=" + URLEncoder.encode(q, "UTF-8"))
+            val body = overpass(q)
             val els = JSONObject(body).getJSONArray("elements")
             for (i in 0 until els.length()) {
                 val tags = els.getJSONObject(i).optJSONObject("tags") ?: continue
@@ -306,6 +306,24 @@ object Router {
             digits != null && s.all { it.isDigit() } -> (digits * 0.621371).roundToInt()  // plain number = km/h
             else -> null
         }
+    }
+
+    /** Overpass with fallback mirrors (the main server is often busy / rate-limited). */
+    private val OVERPASS = listOf("https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter")
+    @Volatile private var overpassFirst = 0
+    private fun overpass(q: String, connectMs: Int = 8000, readMs: Int = 20000): String {
+        var last: Exception? = null
+        for (i in OVERPASS.indices) {
+            val idx = (overpassFirst + i) % OVERPASS.size
+            try {
+                val body = httpGet(OVERPASS[idx] + "?data=" + URLEncoder.encode(q, "UTF-8"), connectMs, readMs)
+                if (!body.trimStart().startsWith("{")) throw java.io.IOException("busy")
+                overpassFirst = idx
+                return body
+            } catch (e: Exception) { last = e }
+        }
+        throw last ?: java.io.IOException("overpass unavailable")
     }
 
     private fun httpGet(urlStr: String, connectMs: Int = 12000, readMs: Int = 20000): String {

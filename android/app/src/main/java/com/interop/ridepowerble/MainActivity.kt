@@ -110,6 +110,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     @Volatile private var pois: List<Router.Poi> = emptyList()
     private var poiBox: DoubleArray? = null                      // s,w,n,e already loaded
     private var poiLoading = false
+    private var poiFailAt = 0L
     private val ui = Handler(Looper.getMainLooper())
     private var sbH = 0
 
@@ -353,8 +354,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 }
                 is FillExtrusionLayer -> if (l.sourceLayer == "building") {
                     l.setProperties(
-                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else "#ECEDF0"),
-                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.8f else 0.72f))
+                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else "#E1E3E7"),
+                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.9f else 0.92f))
                 }
                 is FillLayer -> if (l.sourceLayer == "building") {
                     l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#E8E9EC"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DCDEE2"))
@@ -802,19 +803,28 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     // ============================ shops & places on the map ============================
     private fun loadPois() {
         val m = map ?: return
-        if (m.cameraPosition.zoom < 15.0 || poiLoading || !prefs().getBoolean("showPois", true)) return
-        val b = m.projection.visibleRegion.latLngBounds
+        if (m.cameraPosition.zoom < 14.5) return
+        val t = m.cameraPosition.target ?: return
+        loadPoisAround(t.latitude, t.longitude)
+    }
+
+    /** Loads places in a ~1.5 km box around a point (works while tilted/navigating too). */
+    private fun loadPoisAround(lat: Double, lon: Double) {
+        if (poiLoading || !prefs().getBoolean("showPois", true)) return
         val have = poiBox
-        if (have != null && b.latitudeSouth >= have[0] && b.longitudeWest >= have[1] && b.latitudeNorth <= have[2] && b.longitudeEast <= have[3]) return
-        val dLat = (b.latitudeNorth - b.latitudeSouth) * 0.3; val dLon = (b.longitudeEast - b.longitudeWest) * 0.3
-        val box = doubleArrayOf(b.latitudeSouth - dLat, b.longitudeWest - dLon, b.latitudeNorth + dLat, b.longitudeEast + dLon)
-        if (box[2] - box[0] > 0.08 || box[3] - box[1] > 0.12) return
+        if (have != null) {   // still well inside what's loaded?
+            val iLat = (have[2] - have[0]) * 0.25; val iLon = (have[3] - have[1]) * 0.25
+            if (lat > have[0] + iLat && lat < have[2] - iLat && lon > have[1] + iLon && lon < have[3] - iLon) return
+        }
+        val now = System.currentTimeMillis()
+        if (now - poiFailAt < 15000) return            // back off briefly after a failure
+        val box = doubleArrayOf(lat - 0.0135, lon - 0.021, lat + 0.0135, lon + 0.021)
         poiLoading = true
         poiExec.execute {
             val got = Router.fetchPois(box[0], box[1], box[2], box[3])
             runOnUiThread {
                 poiLoading = false
-                if (got.isEmpty()) return@runOnUiThread
+                if (got.isEmpty()) { poiFailAt = System.currentTimeMillis(); return@runOnUiThread }
                 pois = got; poiBox = box
                 srcPoi?.setGeoJson(poiJson(got))
             }
@@ -1178,6 +1188,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun onNavFix(loc: Location) {
+        loadPoisAround(loc.latitude, loc.longitude)
         val nr = nav ?: return
         val d = dest ?: return
         val s = nr.snap(loc.latitude, loc.longitude, navSeg)
