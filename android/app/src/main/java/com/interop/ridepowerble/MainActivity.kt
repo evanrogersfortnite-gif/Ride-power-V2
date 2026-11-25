@@ -78,7 +78,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     private enum class Mode { BROWSE, PLACE, ROUTES, NAV, ARRIVED }
 
-    private val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+    private fun styleUrl() = "https://tiles.openfreemap.org/styles/" + (prefs().getString("mapStyle", "liberty") ?: "liberty")
+    private var appliedStyle = ""
+    private var speedAlertLim = -1; private var speedAlertAt = 0L
+    private var lowBattWarned = false
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
@@ -189,6 +192,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         range = RangeLearner(this)
         trafficOn = prefs().getBoolean("traffic", false) && trafficKey().isNotEmpty()
         muted = prefs().getBoolean("muted", false)
+        routeProfile = prefs().getString("defProfile", "trekking") ?: "trekking"
         tts = TextToSpeech(this) { st ->
             ttsReady = st == TextToSpeech.SUCCESS
             if (ttsReady) tts?.language = Locale.UK
@@ -239,7 +243,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
             false
         }
-        m.setStyle(Style.Builder().fromUri(STYLE_URL)) { st -> addLayers(st) }
+        appliedStyle = styleUrl()
+        m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
     }
 
     private fun addLayers(st: Style) {
@@ -274,10 +279,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.iconImage(Expression.get("icon")), PropertyFactory.iconSize(0.5f),
             PropertyFactory.textField(Expression.get("name")), PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
             PropertyFactory.textSize(12.5f), PropertyFactory.textColor(Expression.toColor(Expression.get("color"))),
-            PropertyFactory.textHaloColor("#FFFFFF"), PropertyFactory.textHaloWidth(1.6f),
+            PropertyFactory.textHaloColor(if (appliedStyle.endsWith("dark")) "#1F1F1F" else "#FFFFFF"), PropertyFactory.textHaloWidth(1.6f),
             PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(1.2f, 0f)),
             PropertyFactory.textMaxWidth(9f), PropertyFactory.textOptional(true),
-            PropertyFactory.symbolSortKey(Expression.get("rank"))).also { it.setMinZoom(15.5f) }, "route-alt-casing")
+            PropertyFactory.symbolSortKey(Expression.get("rank")),
+            PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE)).also { it.setMinZoom(15.5f) }, "route-alt-casing")
         if (trafficOn) addTrafficLayer(st)
         redrawRoutes()
         lastLoc?.let { srcMe?.setGeoJson(pointJson(it.latitude, it.longitude)) }
@@ -421,7 +427,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         gearBtn = TextView(this).apply {
             text = "⚙"; textSize = 28f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             background = shape(FAB, dp(18)); elevation = dp(6).toFloat()
-            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+            setOnClickListener { startActivity(Intent(this@MainActivity, AppSettingsActivity::class.java)) }
         }
         frame.addView(gearBtn, FrameLayout.LayoutParams(dp(60), dp(60)).apply {
             gravity = Gravity.BOTTOM or Gravity.END; setMargins(0, 0, dp(14), dp(22))
@@ -553,7 +559,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st?.getLayer("route-alt-l")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         st?.getLayer("route-alt-casing")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         if (mode != Mode.ROUTES) { bubbleLayer.removeAllViews(); bubbles.clear() } else buildBubbles()
-        if (mode == Mode.NAV) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (mode == Mode.NAV || prefs().getBoolean("keepOn", false)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
@@ -706,7 +712,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     // ============================ shops & places on the map ============================
     private fun loadPois() {
         val m = map ?: return
-        if (m.cameraPosition.zoom < 15.0 || poiLoading) return
+        if (m.cameraPosition.zoom < 15.0 || poiLoading || !prefs().getBoolean("showPois", true)) return
         val b = m.projection.visibleRegion.latLngBounds
         val have = poiBox
         if (have != null && b.latitudeSouth >= have[0] && b.longitudeWest >= have[1] && b.latitudeNorth <= have[2] && b.longitudeEast <= have[3]) return
@@ -740,7 +746,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     /** Nearest drawn place within a finger's width of the tap. */
     private fun poiAt(ll: LatLng): Router.Poi? {
         val m = map ?: return null
-        if (m.cameraPosition.zoom < 15.5) return null
+        if (m.cameraPosition.zoom < 15.5 || !prefs().getBoolean("showPois", true)) return null
         val tap = m.projection.toScreenLocation(ll)
         var best: Router.Poi? = null; var bestD = dp(28).toFloat()
         for (p in pois) {
@@ -1082,7 +1088,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun navCamera(lat: Double, lon: Double, bearing: Double, speedMs: Double) {
         val m = map ?: return
         val zoom = when { speedMs > 9 -> 16.6; speedMs > 5 -> 17.2; else -> 17.7 }
-        val cp = CameraPosition.Builder().target(LatLng(lat, lon)).zoom(zoom).bearing(bearing).tilt(55.0)
+        val cp = CameraPosition.Builder().target(LatLng(lat, lon)).zoom(zoom).bearing(bearing).tilt(if (prefs().getBoolean("navTilt", true)) 55.0 else 0.0)
             .padding(0.0, mapView.height * 0.45, 0.0, 0.0).build()
         m.animateCamera(CameraUpdateFactory.newCameraPosition(cp), 950)
     }
@@ -1182,6 +1188,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         tvSpeed.text = mph.toString()
         val lim = limitMph
         tvSpeed.setTextColor(if (lim != null && mph > lim + 1) RED else INK)
+        if (lim != null && mph > lim + 2 && prefs().getBoolean("speedAlert", true)) {
+            val now = System.currentTimeMillis()
+            if (lim != speedAlertLim || now - speedAlertAt > 90_000) {
+                speedAlertLim = lim; speedAlertAt = now; speak("Speed limit $lim")
+            }
+        }
         maybeQuerySpeedLimit(loc)
 
         if (mode == Mode.NAV) { onNavFix(loc); return }
@@ -1207,7 +1219,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val v = Router.speedLimitMph(loc.latitude, loc.longitude)
             runOnUiThread {
                 limitBusy = false; limitMph = v
-                if (v != null) { tvLimit.text = v.toString(); tvLimit.visibility = View.VISIBLE } else tvLimit.visibility = View.GONE
+                if (v != null) tvLimit.text = v.toString()
+                tvLimit.visibility = if (v != null && prefs().getBoolean("showLimit", true)) View.VISIBLE else View.GONE
             }
         }
     }
@@ -1233,6 +1246,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val p = pct.roundToInt()
             tvBatt.text = battText(pct)
             tvBatt.setTextColor(when { p > 50 -> GREEN; p > 20 -> AMBER; else -> RED })
+            val warnAt = prefs().getInt("lowBatt", 15)
+            if (warnAt > 0 && p <= warnAt && !lowBattWarned) {
+                lowBattWarned = true
+                val msg = "Battery low, $p percent, about ${range.rangeMiles(pct).roundToInt()} miles left"
+                speak(msg); toast(msg)
+            } else if (p > warnAt + 5) lowBattWarned = false
         }
     }
 
@@ -1376,7 +1395,34 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     // ============================ lifecycle ============================
     override fun onStart() { super.onStart(); mapView.onStart() }
-    override fun onResume() { super.onResume(); mapView.onResume(); BleManager.addListener(this) }
+    override fun onResume() { super.onResume(); mapView.onResume(); BleManager.addListener(this); applySettings() }
+
+    /** Picks up anything changed on the Settings screen. */
+    private fun applySettings() {
+        val p = prefs()
+        if (p.getBoolean("resetLearners", false)) {
+            p.edit().remove("resetLearners").apply()
+            estimator = BatteryEstimator(this); range = RangeLearner(this); learner = TripLearner(this)
+            lastPct = -1.0; tvBatt.text = "🔋 –"
+        }
+        muted = p.getBoolean("muted", false)
+        if (::muteBtn.isInitialized) muteBtn.text = if (muted) "🔇" else "🔊"
+        if (mode != Mode.ROUTES && mode != Mode.NAV) routeProfile = p.getString("defProfile", "trekking") ?: "trekking"
+        if (limitMph != null) tvLimit.visibility = if (p.getBoolean("showLimit", true)) View.VISIBLE else View.GONE
+        val wantTraffic = p.getBoolean("traffic", false) && trafficKey().isNotEmpty()
+        if (wantTraffic != trafficOn) {
+            trafficOn = wantTraffic
+            trafficBtn.background = shape(if (trafficOn) SOFTBLUE else Color.WHITE, dp(24))
+            map?.getStyle { st -> if (trafficOn) addTrafficLayer(st) else removeTrafficLayer(st) }
+        }
+        val m = map ?: return
+        if (appliedStyle.isNotEmpty() && styleUrl() != appliedStyle) {
+            appliedStyle = styleUrl()
+            m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
+        } else m.style?.getLayer("poi-l")?.setProperties(
+            PropertyFactory.visibility(if (p.getBoolean("showPois", true)) Property.VISIBLE else Property.NONE))
+        applyMode()
+    }
     override fun onPause() {
         super.onPause(); mapView.onPause(); BleManager.removeListener(this); estimator.save(); range.save()
         lastLoc?.let {

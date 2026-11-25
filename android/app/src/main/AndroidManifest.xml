@@ -46,6 +46,11 @@
             android:exported="false"
             android:label="Bike settings"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".AppSettingsActivity"
+            android:exported="false"
+            android:label="Settings"
+            android:screenOrientation="portrait" />
         <receiver android:name=".UpdateReceiver" android:exported="false" />
     </application>
 </manifest>
