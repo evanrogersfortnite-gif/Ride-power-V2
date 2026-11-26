@@ -38,9 +38,9 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setBackgroundColor(Color.WHITE); setPadding(dp(8), dp(10), dp(16), dp(10))
             elevation = dp(2).toFloat()
-            addView(TextView(context).apply {
-                text = "←"; textSize = 24f; setTextColor(INK); gravity = Gravity.CENTER
-                setOnClickListener { finish() }
+            addView(ImageView(context).apply {
+                setImageDrawable(AppIcons.drawable(this@AppSettingsActivity, "arrow_back", INK, 24))
+                scaleType = ImageView.ScaleType.CENTER; setOnClickListener { finish() }
             }, LinearLayout.LayoutParams(dp(48), dp(48)))
             addView(TextView(context).apply { text = "Settings"; textSize = 21f; setTextColor(INK); setTypeface(null, Typeface.BOLD) })
         })
@@ -63,11 +63,11 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         // ---------------- Bike ----------------
         section("Bike")
         card {
-            row("🛵", "Bike settings", "Controller: PAS, current, regen, limits, self-learning") {
+            row("bike", "Bike settings", "Controller: PAS, current, regen, limits, self-learning") {
                 startActivity(Intent(this, SettingsActivity::class.java))
             }
             line()
-            val st = row("🔗", if (BleManager.connected) "Disconnect bike" else "Connect bike", statusLine()) {
+            val st = row("bluetooth", if (BleManager.connected) "Disconnect bike" else "Connect bike", statusLine()) {
                 if (BleManager.connected) BleManager.disconnect()
                 else if (BleManager.isBluetoothOn()) BleManager.connect()
                 else toast("Turn on Bluetooth first")
@@ -77,66 +77,66 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             line()
             val est = BatteryEstimator(this@AppSettingsActivity)
             val rng = RangeLearner(this@AppSettingsActivity)
-            choice("🔌", "Battery voltage", "packSeries", listOf("Auto-detect" to 0, "36 V (10S, 42 V full)" to 10,
+            choice("bolt", "Battery voltage", "packSeries", listOf("Auto-detect" to 0, "36 V (10S, 42 V full)" to 10,
                 "48 V (13S, 54.6 V full)" to 13, "52 V (14S, 58.8 V full)" to 14, "60 V (16S, 67.2 V full)" to 16,
                 "72 V (20S, 84 V full)" to 20), 0) {
                 getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().remove("soc").remove("series").apply()
                 prefs().edit().putBoolean("resetLearners", true).apply() }
             line()
             val rtV = BleManager.lastRealtime?.batteryV
-            row("🎯", "Voltage calibration", (if (rtV != null) "Reading ${"%.1f".format(rtV)} V" else "Connect the bike to calibrate") +
+            row("tune", "Voltage calibration", (if (rtV != null) "Reading ${"%.1f".format(rtV)} V" else "Connect the bike to calibrate") +
                     (if (BleManager.voltCal != 1.0) " · corrected ×${"%.3f".format(BleManager.voltCal)}" else "")) { calibrateVolts() }
             line()
-            choice("🔋", "Controller current limit", "maxAmps", listOf(20, 25, 30, 35, 40, 45, 50, 60, 70, 80).map { "$it A" to it }, 45) {
+            choice("bolt", "Controller current limit", "maxAmps", listOf(20, 25, 30, 35, 40, 45, 50, 60, 70, 80).map { "$it A" to it }, 45) {
                 prefs().edit().putBoolean("resetLearners", true).apply() }
             line()
-            choice("⚡", "Battery capacity", "packAh10", listOf("Not set" to 0) +
+            choice("battery", "Battery capacity", "packAh10", listOf("Not set" to 0) +
                 listOf(10, 12, 13, 15, 17, 17.5, 20, 21, 24, 25, 28, 30, 35, 40, 50).map {
                     val n = it.toDouble(); (if (n % 1.0 == 0.0) "${n.toInt()} Ah" else "$n Ah") to (n * 10).toInt() }, 0) {
                 prefs().edit().putBoolean("resetLearners", true).apply() }
             line()
-            row("🔋", "Battery & range learning",
+            row("battery", "Battery & range learning",
                 "Learned full range ≈ ${"%.0f".format(rng.fullRangeMiles())} mi\n${est.summary()}") { confirmResetBattery() }
             line()
-            choice("🏁", "Range estimate speed", "rangeMph",
+            choice("trending", "Range estimate speed", "rangeMph",
                 listOf("Automatic (your average speed)" to 0) + listOf(10, 12, 15, 18, 20, 22, 25, 28).map { "$it mph average" to it }, 0)
             line()
-            choice("⚠️", "Low battery warning", "lowBatt", listOf("Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "25%" to 25), 15)
+            choice("warning", "Low battery warning", "lowBatt", listOf("Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "25%" to 25), 15)
         }
 
         // ---------------- Map & appearance ----------------
         section("Map & appearance")
         card {
-            choiceStr("🗺", "Map style", "mapStyle",
+            choiceStr("layers", "Map style", "mapStyle",
                 listOf("Standard" to "liberty", "Bright" to "bright", "Light" to "positron", "Dark" to "dark"), "liberty")
             line()
             val hz = (if (android.os.Build.VERSION.SDK_INT >= 30) display?.refreshRate else @Suppress("DEPRECATION") windowManager.defaultDisplay.refreshRate)?.let { Math.round(it) } ?: 60
-            choice("🎞", "Map smoothness", "mapFps", listOf("Maximum — ${hz} Hz (smoothest)" to 0) +
+            choice("tune", "Map smoothness", "mapFps", listOf("Maximum — ${hz} Hz (smoothest)" to 0) +
                 listOf(120, 90, 60).filter { it < hz }.map { "$it Hz" to it } + listOf("30 Hz (saves battery)" to 30), 0)
             line()
-            toggle("🏪", "Shops & places on the map", "Names and icons when zoomed in", "showPois", true)
+            toggle("store", "Shops & places on the map", "Names and icons when zoomed in", "showPois", true)
             line()
-            toggle("🏙", "3D buildings", "Off = flat buildings like Google Maps (clearer streets)", "buildings3d", false)
+            toggle("city", "3D buildings", "Off = flat buildings like Google Maps (clearer streets)", "buildings3d", false)
             line()
-            toggle("🧭", "3D view while navigating", "Tilted map that looks ahead", "navTilt", true)
+            toggle("explore", "3D view while navigating", "Tilted map that looks ahead", "navTilt", true)
             line()
-            toggle("☀️", "Keep screen on", "Stop the screen sleeping while the map is open (always on while navigating)", "keepOn", false)
+            toggle("sun", "Keep screen on", "Stop the screen sleeping while the map is open (always on while navigating)", "keepOn", false)
         }
 
         // ---------------- Navigation ----------------
         section("Navigation")
         card {
             val voice = !p.getBoolean("muted", false)
-            switchRow("🔊", "Voice guidance", "Spoken turn instructions", voice) { on -> p.edit().putBoolean("muted", !on).apply() }
+            switchRow("volume_up", "Voice guidance", "Spoken turn instructions", voice) { on -> p.edit().putBoolean("muted", !on).apply() }
             line()
-            choiceStr("🛣", "Preferred routes", "defProfile",
+            choiceStr("directions", "Preferred routes", "defProfile",
                 listOf("Quiet roads & cycle paths" to "trekking", "Faster roads" to "fastbike"), "trekking")
             line()
-            toggle("🚸", "Show speed limit", "Road limit next to your speed", "showLimit", true)
+            toggle("eye", "Show speed limit", "Road limit next to your speed", "showLimit", true)
             line()
-            toggle("📣", "Speed limit alert", "Speaks when you go over the road's limit", "speedAlert", true)
+            toggle("bell", "Speed limit alert", "Speaks when you go over the road's limit", "speedAlert", true)
             line()
-            row("📈", "Trip learning", tripSummary()) { confirm("Reset trip learning?",
+            row("history", "Trip learning", tripSummary()) { confirm("Reset trip learning?",
                 "VoltRoute forgets how long your usual trips take and which routes you ride. ETAs go back to the default.") {
                 getSharedPreferences("trips", Context.MODE_PRIVATE).edit().clear().apply(); p.edit().putBoolean("resetLearners", true).apply(); build()
             } }
@@ -146,25 +146,25 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         section("Traffic")
         card {
             val key = p.getString("tomtom_key", "") ?: ""
-            toggle("🚦", "Show traffic", if (key.isEmpty()) "Add a TomTom key first" else "Live traffic colours on roads", "traffic", false)
+            toggle("traffic", "Show traffic", if (key.isEmpty()) "Add a TomTom key first" else "Live traffic colours on roads", "traffic", false)
             line()
-            row("🔑", "TomTom API key", if (key.isEmpty()) "Not set — tap to add" else "Set (…${key.takeLast(4)}) — tap to change or remove") { editKey() }
+            row("key", "TomTom API key", if (key.isEmpty()) "Not set — tap to add" else "Set (…${key.takeLast(4)}) — tap to change or remove") { editKey() }
         }
 
         // ---------------- Privacy & data ----------------
         section("Privacy & data")
         card {
-            row("🕘", "Clear search history", "Removes your recent searches") {
+            row("history", "Clear search history", "Removes your recent searches") {
                 confirm("Clear search history?", "Your recent searches will be removed.", "Clear") {
                     p.edit().remove("recent").apply(); toast("Search history cleared")
                 }
             }
             line()
-            row("📤", "Export a ride log", "${RideLogger.rides(this@AppSettingsActivity).size} recorded — share one to help tune battery & ETA") {
+            row("share", "Export a ride log", "${RideLogger.rides(this@AppSettingsActivity).size} recorded — share one to help tune battery & ETA") {
                 RideLogger.export(this@AppSettingsActivity)
             }
             line()
-            row("🔒", "What VoltRoute stores", "Everything stays on this phone") {
+            row("lock", "What VoltRoute stores", "Everything stays on this phone") {
                 AlertDialog.Builder(this).setTitle("Your data")
                     .setMessage("VoltRoute has no account and no tracking. Searches, saved places, learned battery/ETA data and your TomTom key are stored only on this phone.\n\n" +
                             "To show maps, search and routes, the app asks free public services (OpenFreeMap, OpenStreetMap/Photon/Nominatim/Overpass, BRouter, and TomTom if traffic is on) about the area you're looking at.")
@@ -175,18 +175,18 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         // ---------------- About ----------------
         section("About")
         card {
-            row("⬆️", "Check for updates", "You have VoltRoute ${Updater.currentVersionName(this@AppSettingsActivity)}") {
+            row("download", "Check for updates", "You have VoltRoute ${Updater.currentVersionName(this@AppSettingsActivity)}") {
                 toast("Checking…")
                 Updater.check(this@AppSettingsActivity) { r, err ->
                     if (r != null) Updater.prompt(this@AppSettingsActivity, r) else toast(err ?: "You're on the latest version")
                 }
             }
             line()
-            row("💻", "Source code", "github.com/evanrogersfortnite-gif/Ride-power-V2") {
+            row("code", "Source code", "github.com/evanrogersfortnite-gif/Ride-power-V2") {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/evanrogersfortnite-gif/Ride-power-V2")))
             }
             line()
-            row("©", "Map data", "© OpenStreetMap contributors · OpenFreeMap · BRouter") {
+            row("info", "Map data", "© OpenStreetMap contributors · OpenFreeMap · BRouter") {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright")))
             }
         }
@@ -283,7 +283,8 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 setOnClickListener { onClick() }
             }
         }
-        r.addView(TextView(this).apply { text = icon; textSize = 20f; gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(30), -2).apply { rightMargin = dp(14) })
+        r.addView(ImageView(this).apply { setImageDrawable(AppIcons.drawable(this@AppSettingsActivity, icon, 0xFF5F6368.toInt(), 24)) },
+            LinearLayout.LayoutParams(dp(24), dp(24)).apply { leftMargin = dp(3); rightMargin = dp(17) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(TextView(this).apply { text = title; textSize = 16f; setTextColor(INK) })
         if (!sub.isNullOrEmpty()) {

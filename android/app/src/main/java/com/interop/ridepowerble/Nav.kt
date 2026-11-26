@@ -164,10 +164,11 @@ class NavRoute(val route: Router.Route) {
     }
 
     companion object {
-        fun glyph(t: Maneuver.Type) = when (t) {
-            Maneuver.Type.SLIGHT_LEFT -> "↖"; Maneuver.Type.LEFT -> "↰"; Maneuver.Type.SHARP_LEFT -> "↲"
-            Maneuver.Type.SLIGHT_RIGHT -> "↗"; Maneuver.Type.RIGHT -> "↱"; Maneuver.Type.SHARP_RIGHT -> "↳"
-            Maneuver.Type.UTURN -> "⤺"; Maneuver.Type.ARRIVE -> "🏁"
+        /** Material turn icon for a manoeuvre (see IconPaths). */
+        fun iconName(t: Maneuver.Type): String = when (t) {
+            Maneuver.Type.SLIGHT_LEFT -> "turn_slight_left"; Maneuver.Type.LEFT -> "turn_left"; Maneuver.Type.SHARP_LEFT -> "turn_sharp_left"
+            Maneuver.Type.SLIGHT_RIGHT -> "turn_slight_right"; Maneuver.Type.RIGHT -> "turn_right"; Maneuver.Type.SHARP_RIGHT -> "turn_sharp_right"
+            Maneuver.Type.UTURN -> "u_turn"; Maneuver.Type.ARRIVE -> "flag"
         }
         fun text(t: Maneuver.Type) = when (t) {
             Maneuver.Type.SLIGHT_LEFT -> "Bear left"; Maneuver.Type.LEFT -> "Turn left"; Maneuver.Type.SHARP_LEFT -> "Sharp left"

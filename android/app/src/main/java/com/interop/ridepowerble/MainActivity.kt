@@ -65,9 +65,9 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private val POI_STYLE = mapOf(
-    "shop" to ("#1A73E8" to "🛒"), "food" to ("#E8710A" to "🍴"), "health" to ("#D93025" to "✚"),
-    "fuel" to ("#0E7C86" to "⚡"), "bike" to ("#188038" to "🚲"), "service" to ("#5F6368" to "£"),
-    "place" to ("#7B61FF" to "★"))
+    "shop" to ("#1A73E8" to "cart"), "food" to ("#E8710A" to "restaurant"), "health" to ("#D93025" to "pharmacy"),
+    "fuel" to ("#0E7C86" to "charging"), "bike" to ("#188038" to "bike"), "service" to ("#5F6368" to "bank"),
+    "place" to ("#7B61FF" to "place"))
 private val POI_RANK = mapOf("shop" to 1, "food" to 2, "bike" to 2, "fuel" to 3, "health" to 3, "service" to 4, "place" to 5)
 
 /**
@@ -530,7 +530,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), 0, dp(8), 0)
             background = shape(Color.WHITE, dp(30)); elevation = dp(6).toFloat()
         }
-        pill.addView(TextView(this).apply { text = "📍"; textSize = 20f })
+        pill.addView(iconView("place", 0xFFEA4335.toInt(), 24))
         searchBar = EditText(this).apply {
             hint = "Search here"; setHintTextColor(MUTED); setTextColor(INK); textSize = 18f
             background = null; setSingleLine(true)
@@ -549,17 +549,17 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
         pill.addView(searchBar, LinearLayout.LayoutParams(0, WRAP, 1f))
         clearBtn = TextView(this).apply {
-            text = "✕"; textSize = 17f; setTextColor(MUTED); setPadding(dp(10), dp(8), dp(10), dp(8)); visibility = View.GONE
+            background = iconBg(Color.TRANSPARENT, 18, "close", MUTED, 36, 20); visibility = View.GONE
             setOnClickListener { clearSearch() }
         }
-        pill.addView(clearBtn)
+        pill.addView(clearBtn, LinearLayout.LayoutParams(dp(36), dp(36)))
         topBox.addView(pill, LinearLayout.LayoutParams(MATCH, dp(60)))
 
         chipsScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false }
         val chips = LinearLayout(this).apply { setPadding(dp(2), dp(10), dp(2), dp(8)) }
-        chips.addView(chip("🏠  Home") { goHome() })
-        val cats = listOf("🛒  Groceries" to "supermarket", "☕  Cafés" to "cafe", "🍽  Restaurants" to "restaurant",
-            "🔧  Bike shops" to "bicycle shop", "🅿  Bike parking" to "bicycle parking", "⛽  Fuel" to "fuel")
+        chips.addView(chip("@home  Home") { goHome() })
+        val cats = listOf("@cart  Groceries" to "supermarket", "@cafe  Cafés" to "cafe", "@restaurant  Restaurants" to "restaurant",
+            "@wrench  Bike shops" to "bicycle shop", "@parking  Bike parking" to "bicycle parking", "@charging  Charging" to "charging station")
         for ((label, q) in cats) chips.addView(chip(label) { categorySearch(label.substringAfter("  "), q) })
         chipsScroll.addView(chips)
         topBox.addView(chipsScroll)
@@ -580,17 +580,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             background = shape(Color.WHITE, dp(20)); elevation = dp(6).toFloat()
         }
         val fromRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        fromRow.addView(TextView(this).apply {
-            text = "←"; textSize = 22f; setTextColor(INK); setPadding(dp(2), 0, dp(14), 0)
-            setOnClickListener { setMode(Mode.PLACE) }
+        fromRow.addView(iconView("arrow_back", INK, 24).apply {
+            (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(14); setOnClickListener { setMode(Mode.PLACE) }
         })
-        fromRow.addView(TextView(this).apply { text = "◉"; textSize = 15f; setTextColor(BLUE); setPadding(0, 0, dp(12), 0) })
+        fromRow.addView(iconView("my_location", BLUE, 18).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(12) })
         fromRow.addView(TextView(this).apply { text = "Your location"; textSize = 17f; setTextColor(BLUE) })
         routeCard.addView(fromRow)
         routeCard.addView(View(this).apply { setBackgroundColor(LINE) },
             LinearLayout.LayoutParams(MATCH, dp(1)).apply { setMargins(dp(64), dp(10), 0, dp(10)) })
         val toRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(38), 0, 0, 0) }
-        toRow.addView(TextView(this).apply { text = "📍"; textSize = 15f; setPadding(0, 0, dp(11), 0) })
+        toRow.addView(iconView("place", 0xFFEA4335.toInt(), 18).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(12) })
         tvRouteTo = TextView(this).apply { textSize = 17f; setTextColor(INK); maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
         toRow.addView(tvRouteTo, LinearLayout.LayoutParams(0, WRAP, 1f))
         routeCard.addView(toRow)
@@ -601,32 +600,29 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     private fun buildRight(frame: FrameLayout) {
         trafficBtn = TextView(this).apply {
-            text = "🚦"; textSize = 20f; gravity = Gravity.CENTER
-            background = shape(if (trafficOn) SOFTBLUE else Color.WHITE, dp(24)); elevation = dp(4).toFloat()
+            background = iconBg(if (trafficOn) SOFTBLUE else Color.WHITE, 24, "traffic", if (trafficOn) BLUE else 0xFF3C4043.toInt(), 48, 24)
+            elevation = dp(4).toFloat()
             setOnClickListener { toggleTraffic() }
         }
         frame.addView(trafficBtn, FrameLayout.LayoutParams(dp(48), dp(48)).apply {
             gravity = Gravity.TOP or Gravity.END; setMargins(0, sbH + dp(136), dp(15), 0)
         })
         compass = TextView(this).apply {
-            text = "▲"; textSize = 18f; setTextColor(RED); gravity = Gravity.CENTER
-            background = shape(Color.WHITE, dp(24)); elevation = dp(4).toFloat(); visibility = View.GONE
+            background = iconBg(Color.WHITE, 23, "navigation", RED, 46, 24); elevation = dp(4).toFloat(); visibility = View.GONE
             setOnClickListener { map?.animateCamera(CameraUpdateFactory.bearingTo(0.0), 400) }
         }
         frame.addView(compass, FrameLayout.LayoutParams(dp(46), dp(46)).apply {
             gravity = Gravity.TOP or Gravity.END; setMargins(0, sbH + dp(194), dp(16), 0)
         })
         myLocBtn = TextView(this).apply {
-            text = "◉"; textSize = 26f; setTextColor(BLUE); gravity = Gravity.CENTER
-            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat()
+            background = iconBg(Color.WHITE, 18, "my_location", BLUE, 56, 26); elevation = dp(4).toFloat()
             setOnClickListener { recenter() }
         }
         frame.addView(myLocBtn, FrameLayout.LayoutParams(dp(56), dp(56)).apply {
             gravity = Gravity.BOTTOM or Gravity.END; setMargins(0, 0, dp(16), dp(96))
         })
         gearBtn = TextView(this).apply {
-            text = "⚙"; textSize = 28f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
-            background = shape(FAB, dp(18)); elevation = dp(6).toFloat()
+            background = iconBg(FAB, 18, "settings", Color.WHITE, 60, 28); elevation = dp(6).toFloat()
             setOnClickListener { startActivity(Intent(this@MainActivity, AppSettingsActivity::class.java)) }
         }
         frame.addView(gearBtn, FrameLayout.LayoutParams(dp(60), dp(60)).apply {
@@ -705,8 +701,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             background = shape(NAVGREEN, dp(22)); elevation = dp(10).toFloat()
         }
         val main = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(14), dp(18), dp(14)) }
-        tvTurnIcon = TextView(this).apply { textSize = 46f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); setPadding(0, 0, dp(14), 0) }
-        main.addView(tvTurnIcon)
+        tvTurnIcon = TextView(this)
+        main.addView(tvTurnIcon, LinearLayout.LayoutParams(dp(52), dp(52)).apply { rightMargin = dp(16) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         tvTurnDist = TextView(this).apply { textSize = 30f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD) }
         tvTurnText = TextView(this).apply { textSize = 18f; setTextColor(0xFFE6F4EA.toInt()); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
@@ -733,22 +729,23 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
             elevation = dp(14).toFloat(); isClickable = true
         }
-        navBottom.addView(roundIcon("✕") { stopNav() })
+        navBottom.addView(roundIcon("close") { stopNav() })
         val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
         tvEta = TextView(this).apply { textSize = 24f; setTextColor(GREEN); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
         tvEtaSub = TextView(this).apply { textSize = 15f; setTextColor(MUTED); gravity = Gravity.CENTER }
         mid.addView(tvEta); mid.addView(tvEtaSub)
         navBottom.addView(mid, LinearLayout.LayoutParams(0, WRAP, 1f))
-        muteBtn = roundIcon(if (muted) "🔇" else "🔊") {
+        muteBtn = roundIcon(if (muted) "volume_off" else "volume_up") {
             muted = !muted; prefs().edit().putBoolean("muted", muted).apply()
-            muteBtn.text = if (muted) "🔇" else "🔊"
+            setRoundIcon(muteBtn, if (muted) "volume_off" else "volume_up")
             if (muted) tts?.stop()
         }
         navBottom.addView(muteBtn)
         frame.addView(navBottom, FrameLayout.LayoutParams(MATCH, WRAP).apply { gravity = Gravity.BOTTOM })
 
         recenterPill = TextView(this).apply {
-            text = "⌖  Re-centre"; textSize = 15f; setTextColor(BLUE); setTypeface(null, Typeface.BOLD)
+            iconText("@navigation  Re-centre", BLUE, 18); gravity = Gravity.CENTER_VERTICAL
+            textSize = 15f; setTextColor(BLUE); setTypeface(null, Typeface.BOLD)
             setPadding(dp(18), dp(12), dp(18), dp(12)); background = shape(Color.WHITE, dp(24)); elevation = dp(6).toFloat()
             setOnClickListener { follow = true; recenterPill.visibility = View.GONE; lastLoc?.let { onNavFix(it) } }
         }
@@ -925,7 +922,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val list = localFirst(sorted, near)
         list.take(7).forEachIndexed { i, p ->
             if (i > 0) resultsCard.addView(divider())
-            resultsCard.addView(placeRow(p, near, query, catEmoji(p.cat)))
+            resultsCard.addView(placeRow(p, near, query, IconPaths.forCategory(p.cat)))
         }
         resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE
     }
@@ -935,9 +932,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(11), dp(16), dp(11))
             setOnClickListener { selectPlace(p) }
         }
-        row.addView(TextView(this).apply {
-            text = icon; textSize = 17f; gravity = Gravity.CENTER; background = shape(CHIPBG, dp(18))
-        }, LinearLayout.LayoutParams(dp(38), dp(38)).apply { rightMargin = dp(12) })
+        row.addView(View(this).apply { background = iconBg(CHIPBG, 19, icon, 0xFF5F6368.toInt(), 38, 20) },
+            LinearLayout.LayoutParams(dp(38), dp(38)).apply { rightMargin = dp(12) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(TextView(this).apply {
             text = highlight(p.title, query); textSize = 16f; setTextColor(INK); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
@@ -1105,17 +1101,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
     }
 
-    private fun makePoiIcon(color: String, glyph: String): Bitmap {
+    /** Google-style place badge: coloured circle, white ring, white Material icon. */
+    private fun makePoiIcon(color: String, icon: String): Bitmap {
         val sz = 72
         val bmp = Bitmap.createBitmap(sz, sz, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.color = Color.WHITE; c.drawCircle(sz / 2f, sz / 2f, sz / 2f, paint)
-        paint.color = Color.parseColor(color); c.drawCircle(sz / 2f, sz / 2f, sz / 2f - 5f, paint)
-        paint.color = Color.WHITE; paint.textSize = 36f; paint.textAlign = Paint.Align.CENTER
-        paint.typeface = Typeface.DEFAULT_BOLD
-        val y = sz / 2f - (paint.descent() + paint.ascent()) / 2f
-        c.drawText(glyph, sz / 2f, y, paint)
+        paint.color = 0x33000000; c.drawCircle(sz / 2f, sz / 2f + 2f, sz / 2f - 2f, paint)      // soft shadow
+        paint.color = Color.WHITE; c.drawCircle(sz / 2f, sz / 2f, sz / 2f - 2f, paint)
+        paint.color = Color.parseColor(color); c.drawCircle(sz / 2f, sz / 2f, sz / 2f - 7f, paint)
+        AppIcons.draw(c, icon, Color.WHITE, 18f, 18f, 36f)
         return bmp
     }
 
@@ -1142,11 +1137,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         if (meta.isNotEmpty()) col.addView(TextView(this).apply { text = meta.joinToString("  ·  "); textSize = 15f; setTextColor(MUTED); setPadding(0, dp(4), 0, 0) })
         if (d.subtitle.isNotEmpty()) col.addView(TextView(this).apply { text = d.subtitle; textSize = 14f; setTextColor(MUTED); setPadding(0, dp(2), 0, 0) })
         head.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f))
-        head.addView(roundIcon("✕") { closeAll() })
+        head.addView(roundIcon("close") { closeAll() })
         sheet.addView(head)
         val btns = LinearLayout(this).apply { setPadding(0, dp(18), 0, 0) }
-        btns.addView(pillButton("➤  Directions", BLUE, Color.WHITE) { startDirections() }, LinearLayout.LayoutParams(0, dp(52), 1.3f).apply { rightMargin = dp(10) })
-        btns.addView(pillButton("🏠  Save as Home", SOFTBLUE, BLUE) { saveHome(d) }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        btns.addView(pillButton("@directions  Directions", BLUE, Color.WHITE) { startDirections() }, LinearLayout.LayoutParams(0, dp(52), 1.3f).apply { rightMargin = dp(10) })
+        btns.addView(pillButton("@home  Save as Home", SOFTBLUE, BLUE) { saveHome(d) }, LinearLayout.LayoutParams(0, dp(52), 1f))
         sheet.addView(btns)
     }
 
@@ -1197,15 +1192,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         sheet.removeAllViews()
         sheet.addView(handle())
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        head.addView(TextView(this).apply { text = "🚲  E-bike"; textSize = 22f; setTextColor(INK); setTypeface(null, Typeface.BOLD) },
+        head.addView(TextView(this).apply { iconText("@bike  E-bike", INK, 24); gravity = Gravity.CENTER_VERTICAL; textSize = 22f; setTextColor(INK); setTypeface(null, Typeface.BOLD) },
             LinearLayout.LayoutParams(0, WRAP, 1f))
-        head.addView(roundIcon("✕") { closeAll() })
+        head.addView(roundIcon("close") { closeAll() })
         sheet.addView(head)
 
         val prof = LinearLayout(this).apply { setPadding(0, dp(12), 0, dp(4)) }
-        prof.addView(toggleChip("🌳  Quiet roads", routeProfile == "trekking") {
+        prof.addView(toggleChip("@leaf  Quiet roads", routeProfile == "trekking") {
             if (routeProfile != "trekking") { routeProfile = "trekking"; computeRoutes(d) } })
-        prof.addView(toggleChip("🛣  Faster roads", routeProfile == "fastbike") {
+        prof.addView(toggleChip("@bolt  Faster roads", routeProfile == "fastbike") {
             if (routeProfile != "fastbike") { routeProfile = "fastbike"; computeRoutes(d) } })
         sheet.addView(prof)
 
@@ -1231,9 +1226,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val need = (r.meters / 1609.34) / max(0.01, range.rangeAt(1.0, rangeMph()))   // at your average speed
             val left = lastPct - need
             sheet.addView(TextView(this).apply {
-                text = if (left < 8) "⚠ May not have enough battery (needs ~${need.roundToInt()}%, you have ${lastPct.roundToInt()}%)"
-                       else "🔋 Arrive with ~${left.roundToInt()}% battery"
-                textSize = 14f; setTextColor(if (left < 8) RED else if (left < 25) AMBER else GREEN)
+                val col = if (left < 8) RED else if (left < 25) AMBER else GREEN
+                iconText(if (left < 8) "@warning May not have enough battery (needs ~${need.roundToInt()}%, you have ${lastPct.roundToInt()}%)"
+                         else "@battery Arrive with ~${left.roundToInt()}% battery", col, 16)
+                gravity = Gravity.CENTER_VERTICAL; compoundDrawablePadding = dp(6)
+                textSize = 14f; setTextColor(col)
                 setTypeface(null, Typeface.BOLD); setPadding(0, dp(6), 0, 0)
             })
         }
@@ -1259,7 +1256,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 })
                 card.addView(TextView(this).apply { text = fmtMiles(rr.meters.toDouble()); textSize = 13f; setTextColor(MUTED) })
                 val tag = when {
-                    usual != null && abs(rr.meters - usual) < max(80, usual / 20) -> "★ Your usual"
+                    usual != null && abs(rr.meters - usual) < max(80, usual / 20) -> "Your usual"
                     eta(rr) == fastest -> "Fastest"
                     else -> "+${((eta(rr) - fastest) / 60.0).roundToInt()} min"
                 }
@@ -1278,10 +1275,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
             textSize = 12f; setTextColor(MUTED); setPadding(0, dp(10), 0, dp(14))
         })
-        sheet.addView(pillButton("▲  Start", BLUE, Color.WHITE) { startNav() }, LinearLayout.LayoutParams(MATCH, dp(56)))
+        sheet.addView(pillButton("@navigation  Start", BLUE, Color.WHITE) { startNav() }, LinearLayout.LayoutParams(MATCH, dp(56)))
         // no traffic key needed: show this trip in Google Maps, which has live traffic
         sheet.addView(TextView(this).apply {
-            text = "🚦  Check traffic in Google Maps"; textSize = 14f; setTextColor(BLUE); gravity = Gravity.CENTER
+            iconText("@traffic  Check traffic in Google Maps", BLUE, 16); textSize = 14f; setTextColor(BLUE); gravity = Gravity.CENTER
             setPadding(0, dp(12), 0, dp(2))
             setOnClickListener { openTrafficInGoogleMaps() }
         })
@@ -1292,7 +1289,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun hillLabel(r: Router.Route): String {
         val perKm = if (r.meters > 0) r.ascentM / (r.meters / 1000.0) else 0.0
         val word = when { perKm < 5 -> "Mostly flat"; perKm < 12 -> "Gentle hills"; perKm < 22 -> "Moderate hills"; else -> "Steep hills" }
-        return "$word (↗ ${(r.ascentM * 3.28084).roundToInt()} ft)"
+        return "$word (${(r.ascentM * 3.28084).roundToInt()} ft climb)"
     }
 
     /** Time bubbles on each route line, like Google Maps. */
@@ -1430,14 +1427,17 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val mi = nr.maneuvers.indexOfFirst { it.along > s.along + 3 }.let { if (it < 0) nr.maneuvers.size - 1 else it }
         val m = nr.maneuvers[mi]
         val dm = max(0.0, m.along - s.along)
-        tvTurnIcon.text = NavRoute.glyph(m.type)
+        tvTurnIcon.text = ""
+        tvTurnIcon.background = AppIcons.drawable(this, NavRoute.iconName(m.type), Color.WHITE, 52)
         tvTurnDist.text = fmtTurnDist(dm)
         tvTurnText.text = if (m.type == Maneuver.Type.ARRIVE) "Arrive at ${d.title}"
             else streetAt(mi)?.let { Router.shortStreet(it) } ?: NavRoute.text(m.type)
         tvTurnText.textSize = if (streetAt(mi) != null && m.type != Maneuver.Type.ARRIVE) 26f else 18f
         val next = nr.maneuvers.getOrNull(mi + 1)
         if (next != null && next.along - m.along < 250) {
-            tvThen.text = "Then  ${NavRoute.glyph(next.type)}"; tvThen.visibility = View.VISIBLE
+            tvThen.text = "Then"
+            tvThen.setCompoundDrawablesRelative(null, null, AppIcons.drawable(this, NavRoute.iconName(next.type), Color.WHITE, 22), null)
+            tvThen.compoundDrawablePadding = dp(8); tvThen.visibility = View.VISIBLE
         } else tvThen.visibility = View.GONE
         announce(mi, m, dm)
 
@@ -1447,7 +1447,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         tvEta.text = fmtDuration(max(1, (remS / 60).roundToInt()))
         val arrivePct = if (lastPct >= 0 && BleManager.connected) lastPct - (remM / 1609.34) / max(0.01, range.rangeAt(1.0, rangeMph())) else null
         tvEtaSub.text = "${fmtMiles(remM)}  ·  ${clock(remS.roundToInt())}" +
-            (arrivePct?.let { "  ·  🔋 ${max(0, it.roundToInt())}% left" } ?: "")
+            (arrivePct?.let { "  ·  ${max(0, it.roundToInt())}% battery left" } ?: "")
         tvEtaSub.setTextColor(if (arrivePct != null && arrivePct < 8) RED else MUTED)
 
         if ((m.type == Maneuver.Type.ARRIVE && dm < 25) || Geo.dist(loc.latitude, loc.longitude, d.lat, d.lon) < 25) { arrive(); return }
@@ -1514,7 +1514,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         srcSel?.setGeoJson(fc(emptyList())); srcAlt?.setGeoJson(fc(emptyList()))
         mode = Mode.ARRIVED; applyMode(); leaveNavCamera()
         sheet.removeAllViews(); sheet.addView(handle())
-        sheet.addView(TextView(this).apply { text = "🏁  You've arrived"; textSize = 24f; setTextColor(INK); setTypeface(null, Typeface.BOLD) })
+        sheet.addView(TextView(this).apply { iconText("@flag  You've arrived", GREEN, 26); gravity = Gravity.CENTER_VERTICAL; textSize = 24f; setTextColor(INK); setTypeface(null, Typeface.BOLD) })
         sheet.addView(TextView(this).apply { text = d.title; textSize = 16f; setTextColor(MUTED); setPadding(0, dp(4), 0, dp(12)) })
         val stats = LinearLayout(this)
         stats.addView(stat(fmtDuration(max(1, secs / 60)), "ride time"), LinearLayout.LayoutParams(0, WRAP, 1f))
@@ -1698,15 +1698,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
         // build the wanted chips; only touch the views when something actually changed (no flicker)
         val want = ArrayList<Pair<String, Int>>()
-        if (d.cruise) want += "⏵ CRUISE" to 0xFF188038.toInt()
+        if (d.cruise) want += "CRUISE" to 0xFF188038.toInt()
         else if (steadySecs >= 1.4) {
             val left = kotlin.math.ceil(hold - steadySecs).toInt()
             if (left > 0) want += "Hold steady + hold − on display… ${left}s" to BLUE
         }
-        if (d.reverse) want += "◀ REVERSE" to 0xFFE37400.toInt()
+        if (d.reverse) want += "REVERSE" to 0xFFE37400.toInt()
         if (d.brake) want += "BRAKE" to RED
-        if (d.antiTheft) want += "🔒 ANTI-THEFT" to 0xFF5F6368.toInt()
-        if (d.fault != 0) want += ("⚠ " + d.faults.first()) to RED
+        if (d.antiTheft) want += "ANTI-THEFT" to 0xFF5F6368.toInt()
+        if (d.fault != 0) want += ("FAULT: " + d.faults.first()) to RED
         if (want != shownChips) {
             shownChips = want
             statusRow.removeAllViews()
@@ -1813,7 +1813,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val o = arr.getJSONObject(i)
             val p = Router.Place(o.optString("n"), o.optDouble("lat"), o.optDouble("lon"), o.optString("l"), o.optString("s"), o.optString("c"))
             if (i > 0) resultsCard.addView(divider())
-            resultsCard.addView(placeRow(p, near, "", "🕘"))
+            resultsCard.addView(placeRow(p, near, "", "history"))
         }
         resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE
     }
@@ -1844,7 +1844,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         if (trafficKey().isEmpty()) { askTrafficKey(); return }
         trafficOn = !trafficOn
         prefs().edit().putBoolean("traffic", trafficOn).apply()
-        trafficBtn.background = shape(if (trafficOn) SOFTBLUE else Color.WHITE, dp(24))
+        trafficBtn.background = iconBg(if (trafficOn) SOFTBLUE else Color.WHITE, 24, "traffic", if (trafficOn) BLUE else 0xFF3C4043.toInt(), 48, 24)
         map?.getStyle { st -> if (trafficOn) addTrafficLayer(st) else removeTrafficLayer(st) }
         toast(if (trafficOn) "Live traffic on" else "Live traffic off")
     }
@@ -1940,13 +1940,13 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
         muted = p.getBoolean("muted", false)
         showBatt(lastPct, BleManager.connected)
-        if (::muteBtn.isInitialized) muteBtn.text = if (muted) "🔇" else "🔊"
+        if (::muteBtn.isInitialized) setRoundIcon(muteBtn, if (muted) "volume_off" else "volume_up")
         if (mode != Mode.ROUTES && mode != Mode.NAV) routeProfile = p.getString("defProfile", "trekking") ?: "trekking"
         if (limitMph != null) tvLimit.visibility = if (p.getBoolean("showLimit", true)) View.VISIBLE else View.GONE
         val wantTraffic = p.getBoolean("traffic", false) && trafficKey().isNotEmpty()
         if (wantTraffic != trafficOn) {
             trafficOn = wantTraffic
-            trafficBtn.background = shape(if (trafficOn) SOFTBLUE else Color.WHITE, dp(24))
+            trafficBtn.background = iconBg(if (trafficOn) SOFTBLUE else Color.WHITE, 24, "traffic", if (trafficOn) BLUE else 0xFF3C4043.toInt(), 48, 24)
             map?.getStyle { st -> if (trafficOn) addTrafficLayer(st) else removeTrafficLayer(st) }
         }
         applyFps()
@@ -2022,26 +2022,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun clock(secFromNow: Int) =
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(System.currentTimeMillis() + secFromNow * 1000L))
 
-    private fun catEmoji(cat: String): String = when (cat) {
-        "supermarket", "convenience", "grocery", "greengrocer" -> "🛒"
-        "cafe", "coffee" -> "☕"
-        "restaurant", "food_court" -> "🍽"
-        "fast_food" -> "🍔"
-        "pub", "bar", "biergarten" -> "🍺"
-        "fuel", "charging_station" -> "⛽"
-        "bicycle", "bicycle_parking", "bicycle_rental" -> "🚲"
-        "school", "university", "college", "kindergarten" -> "🎓"
-        "hospital", "clinic", "doctors" -> "🏥"
-        "pharmacy", "chemist" -> "💊"
-        "bank", "atm" -> "💷"
-        "park", "garden", "nature_reserve" -> "🌳"
-        "station", "bus_stop", "halt", "tram_stop" -> "🚉"
-        "city", "town", "village", "suburb", "hamlet", "neighbourhood" -> "🏙"
-        "house", "residential", "street", "road", "tertiary", "secondary", "primary", "unclassified" -> "🏠"
-        "parking" -> "🅿"
-        "hotel", "guest_house" -> "🏨"
-        else -> "📍"
-    }
     private fun prettyCat(cat: String): String? {
         if (cat.isEmpty() || cat == "yes") return null
         return when (cat) { "convenience" -> "Convenience store"; "fast_food" -> "Fast food"; "fuel" -> "Petrol station"
@@ -2054,14 +2034,36 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun sectionLabel(t: String) = TextView(this).apply {
         text = t; textSize = 13f; setTextColor(MUTED); setTypeface(null, Typeface.BOLD); setPadding(dp(18), dp(12), dp(18), dp(4))
     }
+    // ---- icons instead of emojis: "@name  Label" puts the Material icon before the text ----
+    private fun TextView.iconText(spec: String, color: Int, sizeDp: Int) {
+        if (spec.startsWith("@")) {
+            val name = spec.substring(1).substringBefore(' ')
+            text = spec.substringAfter(' ', "").trimStart()
+            setCompoundDrawablesRelative(AppIcons.drawable(this@MainActivity, name, color, sizeDp), null, null, null)
+            compoundDrawablePadding = dp(8)
+        } else { text = spec; setCompoundDrawablesRelative(null, null, null, null) }
+    }
+    /** Background = rounded shape with the icon centred on it (for square/round buttons). */
+    private fun iconBg(bg: Int, radiusDp: Int, icon: String, color: Int, boxDp: Int, iconDp: Int): android.graphics.drawable.Drawable {
+        val ld = android.graphics.drawable.LayerDrawable(arrayOf(shape(bg, dp(radiusDp)), AppIcons.drawable(this, icon, color, iconDp)))
+        val inset = dp((boxDp - iconDp) / 2)
+        ld.setLayerInset(1, inset, inset, inset, inset)
+        return ld
+    }
+    private fun iconView(name: String, color: Int, sizeDp: Int) = ImageView(this).apply {
+        setImageDrawable(AppIcons.drawable(this@MainActivity, name, color, sizeDp)); layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+    }
+
     private fun chip(label: String, onClick: () -> Unit) = TextView(this).apply {
-        text = label; textSize = 15f; setTextColor(INK); setPadding(dp(16), dp(9), dp(16), dp(9))
+        iconText(label, 0xFF3C4043.toInt(), 18); textSize = 15f; setTextColor(INK); setPadding(dp(14), dp(9), dp(16), dp(9))
+        gravity = Gravity.CENTER_VERTICAL
         background = shape(Color.WHITE, dp(20)); elevation = dp(3).toFloat()
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(8) }
     }
     private fun toggleChip(label: String, on: Boolean, onClick: () -> Unit) = TextView(this).apply {
-        text = label; textSize = 14f; setTypeface(null, Typeface.BOLD); setTextColor(if (on) BLUE else MUTED)
+        iconText(label, if (on) BLUE else MUTED, 16); gravity = Gravity.CENTER_VERTICAL
+        textSize = 14f; setTypeface(null, Typeface.BOLD); setTextColor(if (on) BLUE else MUTED)
         setPadding(dp(14), dp(8), dp(14), dp(8))
         background = GradientDrawable().apply {
             setColor(if (on) SOFTBLUE else Color.WHITE); cornerRadius = dp(18).toFloat(); setStroke(dp(1), if (on) BLUE else LINE)
@@ -2070,14 +2072,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(8) }
     }
     private fun pillButton(t: String, bg: Int, fg: Int, onClick: () -> Unit) = TextView(this).apply {
-        text = t; textSize = 17f; setTextColor(fg); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+        iconText(t, fg, 20); textSize = 17f; setTextColor(fg); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+        if (t.startsWith("@")) setPadding(dp(18), 0, dp(22), 0)
         background = shape(bg, dp(28)); setOnClickListener { onClick() }
     }
-    private fun roundIcon(t: String, onClick: () -> Unit) = TextView(this).apply {
-        text = t; textSize = 18f; setTextColor(INK); gravity = Gravity.CENTER
-        background = shape(CHIPBG, dp(22)); setOnClickListener { onClick() }
+    private fun roundIcon(icon: String, onClick: () -> Unit) = TextView(this).apply {
+        background = iconBg(CHIPBG, 22, icon, 0xFF3C4043.toInt(), 44, 22); setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
     }
+    private fun setRoundIcon(v: View, icon: String) { v.background = iconBg(CHIPBG, 22, icon, 0xFF3C4043.toInt(), 44, 22) }
     private fun divider() = View(this).apply {
         setBackgroundColor(LINE); layoutParams = LinearLayout.LayoutParams(MATCH, dp(1)).apply { leftMargin = dp(64) }
     }

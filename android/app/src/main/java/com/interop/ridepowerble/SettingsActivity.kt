@@ -71,7 +71,9 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setBackgroundColor(TEAL); setPadding(dp(16), dp(14), dp(16), dp(14))
             addView(TextView(context).apply {
-                text = "←  Bike settings"; setTextColor(Color.WHITE); textSize = 18f; setTypeface(null, Typeface.BOLD)
+                text = "Bike settings"; setTextColor(Color.WHITE); textSize = 18f; setTypeface(null, Typeface.BOLD)
+                setCompoundDrawablesRelative(AppIcons.drawable(this@SettingsActivity, "arrow_back", Color.WHITE, 22), null, null, null)
+                compoundDrawablePadding = dp(14); gravity = Gravity.CENTER_VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 setOnClickListener { finish() }
             })
@@ -111,7 +113,7 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
         lc.addView(learnBtn, lpw(ViewGroup.LayoutParams.MATCH_PARENT, 0f))
         body.addView(lc)
 
-        body.addView(ghostBtn("Show diagnostics ▾") { toggleDiag() }, lpw(ViewGroup.LayoutParams.MATCH_PARENT, 0f).apply { topMargin = dp(14) })
+        body.addView(ghostBtn("Show diagnostics") { toggleDiag() }, lpw(ViewGroup.LayoutParams.MATCH_PARENT, 0f).apply { topMargin = dp(14) })
         diagBox = cardColumn().also { it.visibility = View.GONE }
         tvTemps = TextView(this).apply { textSize = 13f; setTextColor(MUTED); text = "Controller temp: –   Motor temp: –" }
         diagBox.addView(tvTemps); diagBox.addView(divider())
