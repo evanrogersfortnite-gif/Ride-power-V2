@@ -1175,6 +1175,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             textSize = 12f; setTextColor(MUTED); setPadding(0, dp(10), 0, dp(14))
         })
         sheet.addView(pillButton("▲  Start", BLUE, Color.WHITE) { startNav() }, LinearLayout.LayoutParams(MATCH, dp(56)))
+        // no traffic key needed: show this trip in Google Maps, which has live traffic
+        sheet.addView(TextView(this).apply {
+            text = "🚦  Check traffic in Google Maps"; textSize = 14f; setTextColor(BLUE); gravity = Gravity.CENTER
+            setPadding(0, dp(12), 0, dp(2))
+            setOnClickListener { openTrafficInGoogleMaps() }
+        })
     }
 
     private fun selectRoute(i: Int) { sel = i; redrawRoutes(); fillRoutesSheet(); fitRoute() }
@@ -1712,14 +1718,25 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         toast(if (trafficOn) "Live traffic on" else "Live traffic off")
     }
 
+    /** Opens this route's destination in Google Maps (driving view shows live traffic). No key needed. */
+    private fun openTrafficInGoogleMaps() {
+        val d = dest ?: return
+        val uri = android.net.Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${d.lat},${d.lon}&travelmode=driving")
+        val i = Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps")
+        try { startActivity(i) } catch (_: Exception) { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+    }
+
     private fun askTrafficKey() {
         val input = EditText(this).apply { hint = "Paste your TomTom API key"; setSingleLine(true) }
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
         AlertDialog.Builder(this).setTitle("Live traffic")
             .setMessage("Live traffic needs a free TomTom key (one rider is well within the free daily limit):\n\n" +
-                    "1. Go to developer.tomtom.com and sign up (free, no card)\n" +
-                    "2. Open your Dashboard → copy the API key\n3. Paste it below")
+                    "1. Go to my.tomtom.com and sign up (free, no card)\n" +
+                    "2. Find your API key there and copy it\n3. Paste it below\n\n" +
+                    "No key? Use “Traffic in Google Maps” on the route screen instead.")
             .setView(box)
+            .setNeutralButton("Open my.tomtom.com") { _, _ ->
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://my.tomtom.com/"))) }
             .setPositiveButton("Save") { _, _ ->
                 val k = input.text.toString().trim()
                 if (k.isNotEmpty()) { prefs().edit().putString("tomtom_key", k).apply(); toggleTraffic() }

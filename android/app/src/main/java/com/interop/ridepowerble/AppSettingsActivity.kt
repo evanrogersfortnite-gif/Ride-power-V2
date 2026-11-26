@@ -237,7 +237,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         }
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
         AlertDialog.Builder(this).setTitle("TomTom API key")
-            .setMessage("Free from developer.tomtom.com → Dashboard → Keys.")
+            .setMessage("Free from my.tomtom.com (TomTom closed the old developer site). Sign up, find your API key, copy it here.")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
                 val k = input.text.toString().trim()
