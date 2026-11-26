@@ -81,6 +81,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
 
     // ---- live state (not persisted) ----
     private var lastMph = 0.0
+    private var fullThr = 0
     private var onSamples = 0
     private var offSamples = 0
     private var parkedSamples = 0
@@ -151,7 +152,10 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         amps = if (ocvRef > 0 && (on || mph > 3)) ((ocvRef - v) / resistance).coerceIn(0.0, limitAmps) else 0.0
         // learn resistance: full throttle, accelerating from low speed = controller at its current limit
         // (only when we know this level's current limit)
-        if (limitKnown && limitAmps > 5 && ocvRef > 0 && thrFrac > 0.9 && mph in 3.0..15.0 && speeds.size == 5 && mph - speeds.first() > 1.2) {
+        // soft "accelerate strength" settings ramp the current up over a second or two, so only measure
+        // once full throttle has been held for ~3 s (the controller is then at its limit)
+        fullThr = if (thrFrac > 0.9) fullThr + 1 else 0
+        if (limitKnown && limitAmps > 5 && ocvRef > 0 && fullThr >= 4 && mph in 3.0..18.0 && speeds.size == 5 && mph - speeds.first() > 1.0) {
             val r = ((ocvRef - v) / limitAmps).coerceIn(0.02, 0.4)
             s("R", resistance * 0.95 + r * 0.05); s("RN", g("RN", 0.0) + 1)
         }
