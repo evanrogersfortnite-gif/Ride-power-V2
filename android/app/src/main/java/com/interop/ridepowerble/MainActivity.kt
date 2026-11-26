@@ -332,6 +332,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
      */
     private fun polishBasemap(st: Style) {
         val dark = appliedStyle.endsWith("dark")
+        fun zc(vararg s: Pair<Float, String>) = Expression.interpolate(Expression.linear(), Expression.zoom(),
+            *s.map { Expression.stop(it.first, Expression.color(Color.parseColor(it.second))) }.toTypedArray())
         fun z(vararg st: Pair<Float, Float>) = Expression.interpolate(Expression.exponential(1.6f), Expression.zoom(),
             *st.map { Expression.stop(it.first, it.second) }.toTypedArray())
         for (l in st.layers) {
@@ -364,15 +366,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                         }
                         l.setProperties(PropertyFactory.lineWidth(c))
                         if (!dark) l.setProperties(PropertyFactory.lineColor(
-                            if (id.contains("motorway") || id.contains("trunk") || id.contains("primary")) "#8FA4BF" else "#CBD0D7"))
+                            if (id.contains("motorway") || id.contains("trunk") || id.contains("primary")) zc(12f to "#7F97B7", 16f to "#7F97B7")
+                            else zc(13f to "#BCC3CC", 16f to "#B9C0C9")))
                     } else {
                         l.setProperties(PropertyFactory.lineWidth(w))
                         if (!dark && (id.contains("minor") || id.contains("street") || id.contains("service")
                                     || id.contains("secondary") || id.contains("tertiary")))
-                            l.setProperties(PropertyFactory.lineColor("#FFFFFF"))
+                            l.setProperties(PropertyFactory.lineColor(zc(12f to "#C9CFD6", 14.5f to "#D9DEE4", 16f to "#FFFFFF")))
                         // main roads: Google's blue-grey instead of yellow/orange
                         if (!dark && (id.contains("trunk") || id.contains("primary")) && !id.contains("motorway"))
-                            l.setProperties(PropertyFactory.lineColor("#AEC1D9"))
+                            l.setProperties(PropertyFactory.lineColor("#9DB4D3"))
                     }
                 }
                 is FillExtrusionLayer -> if (l.sourceLayer == "building") {
@@ -398,11 +401,19 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                         l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#ECEDF0"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DEE0E4")) }
                     dark -> {}
                     l.sourceLayer == "water" -> l.setProperties(PropertyFactory.fillColor("#9CC0F9"))
-                    l.sourceLayer == "park" -> l.setProperties(PropertyFactory.fillColor("#C8EFD4"), PropertyFactory.fillOpacity(1f))
+                    l.sourceLayer == "park" -> l.setProperties(PropertyFactory.fillColor("#B4E2C0"), PropertyFactory.fillOpacity(1f))
                     (l.sourceLayer == "landcover" || l.sourceLayer == "landuse") &&
                         (id.contains("wood") || id.contains("forest") || id.contains("grass") || id.contains("park")
-                            || id.contains("cemetery") || id.contains("pitch") || id.contains("meadow")) ->
-                        l.setProperties(PropertyFactory.fillColor(if (id.contains("wood") || id.contains("forest")) "#BDE5C8" else "#D3F1DC"))
+                            || id.contains("cemetery") || id.contains("pitch") || id.contains("meadow") || id.contains("garden")) ->
+                        l.setProperties(PropertyFactory.fillColor(if (id.contains("wood") || id.contains("forest")) "#A6D8B3" else "#C1E8CB"),
+                            PropertyFactory.fillOpacity(1f))
+                    // schools, hospitals, shops, industry: Google keeps these very subtle; housing areas plain
+                    l.sourceLayer == "landuse" && id.contains("residential") -> l.setProperties(PropertyFactory.fillOpacity(0f))
+                    l.sourceLayer == "landuse" && (id.contains("school") || id.contains("university") || id.contains("college")) ->
+                        l.setProperties(PropertyFactory.fillColor("#EFEBE2"), PropertyFactory.fillOpacity(0.8f))
+                    l.sourceLayer == "landuse" && (id.contains("hospital")) -> l.setProperties(PropertyFactory.fillColor("#F6E3E5"), PropertyFactory.fillOpacity(0.8f))
+                    l.sourceLayer == "landuse" && (id.contains("retail") || id.contains("commercial") || id.contains("industrial")) ->
+                        l.setProperties(PropertyFactory.fillColor("#F1EEF4"), PropertyFactory.fillOpacity(0.7f))
                 }
                 is SymbolLayer -> {
                     if (id == "poi-l" || id == "me-arrow" || id == "me-beam") continue
@@ -426,12 +437,14 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                         // bus stops & transit: only when zoomed right in (Google hides them further out)
                         l.sourceLayer == "poi" && (id.contains("transit") || id.contains("bus") || id.contains("rail")) ->
                             l.setMinZoom(16.5f)
+                        // shops & places: one zoom level earlier, like Google ("Co-op Food" visible further out)
+                        l.sourceLayer == "poi" -> if (l.minZoom > 14f) l.setMinZoom(maxOf(14f, l.minZoom - 1f))
                     }
                 }
             }
         }
         // softer, Google-like land colour on the standard style
-        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F1F3F4"))
+        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F8F9FA"))
     }
 
     /** Faint blue wedge fading outward, pointing up (rotated to the phone's heading). */
