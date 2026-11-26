@@ -1,126 +1,66 @@
 package com.interop.ridepowerble
 
 import android.content.Context
-import kotlin.math.roundToInt
 
 /**
- * Battery percentage (0–100%) from the pack voltage the controller reports.
- *
- * The controller sends voltage only (no current), and voltage sags hard while you're on the
- * throttle, then recovers within a second or two when you let go. So:
- *
- *  - The % comes from the rider's e-bike chart (52 V pack: 58.8 V = 100%, 50.4 V = 50%,
- *    45.4 V = 20%, 42 V = 0% where the pack cuts off); other pack sizes scale per cell.
- *  - It only reads the % from voltages taken after ~3 s OFF the throttle (recovered).
- *    While you're on the throttle it simply HOLDS the last good value — no guessing.
- *  - Coasting, it follows drops smoothly and is slow to rise (ignores regen bumps);
- *    parked, it settles on the true resting value within seconds.
- *  - The first good reading after connecting sets the % directly.
+ * Battery percentage for the app: wraps [BatteryCore] (the logic) and stores what it has
+ * learned (sag model, relaxation, pack size, last %) on the phone.
  */
 class BatteryEstimator(ctx: Context) {
 
-    private val prefs = ctx.getSharedPreferences("battery", Context.MODE_PRIVATE)
+    private val prefs = ctx.getSharedPreferences("battery2", Context.MODE_PRIVATE)
+    private val state = HashMap<String, Double>()
+    private val core: BatteryCore
+    private var lastSaveMs = 0L
 
     companion object {
-        /** Per-cell voltage → %. 52 V pack: 58.8 V = 100%, 50.4 V = 50%, 45.4 V = 20%, 42.0 V = 0% (cut-off). */
-        val CURVE = arrayOf(   // the rider's e-bike chart, 52 V (14S) column, per cell
-            58.8/14.0 to 100.0, 58.0/14.0 to 95.0, 57.1/14.0 to 90.0, 56.3/14.0 to 85.0,
-            55.4/14.0 to 80.0, 54.6/14.0 to 75.0, 53.8/14.0 to 70.0, 52.9/14.0 to 65.0,
-            52.1/14.0 to 60.0, 51.2/14.0 to 55.0, 50.4/14.0 to 50.0, 49.6/14.0 to 45.0,
-            48.7/14.0 to 40.0, 47.9/14.0 to 35.0, 47.0/14.0 to 30.0, 46.2/14.0 to 25.0,
-            45.4/14.0 to 20.0, 44.5/14.0 to 15.0, 43.7/14.0 to 10.0, 42.8/14.0 to 5.0,
-            42.0/14.0 to 0.0
-        )
-        fun pctFromCell(v: Double): Double {
-            if (v >= CURVE.first().first) return 100.0
-            if (v <= CURVE.last().first) return 0.0
-            for (i in 0 until CURVE.size - 1) {
-                val (hi, ph) = CURVE[i]; val (lo, pl) = CURVE[i + 1]
-                if (v <= hi && v >= lo) return pl + (v - lo) / (hi - lo) * (ph - pl)
-            }
-            return 50.0
-        }
+        fun pctFromCell(v: Double) = BatteryCore.pctFromCell(v)
     }
 
-    // pack voltage set by the rider in Settings (0 = auto-detect from voltage)
-    private val fixedSeries = ctx.getSharedPreferences("app", Context.MODE_PRIVATE).getInt("packSeries", 0)
-    private var series = if (fixedSeries > 0) fixedSeries else prefs.getInt("series", 0)
-    private var maxRestV = prefs.getFloat("maxRestV", 0f).toDouble()
-    private var minRestV = prefs.getFloat("minRestV", 999f).toDouble()
-    private var soc = prefs.getFloat("soc", -1f).toDouble()
-    // Hall throttles rest around 0.8 V, not 0 V: "on the throttle" is measured against this.
-    private var idleThrottle = prefs.getFloat("thrIdle", -1f).toDouble()
-    private var lastSpeed = 0
-    private var offThrottle = 0          // consecutive samples off the throttle
-    private var parked = 0               // consecutive samples stopped and off the throttle
-    private var hadGoodReading = false   // this session
-    private var lastSaveMs = 0L
-    private val recent = ArrayDeque<Double>()   // last few recovered (off-throttle) voltages
+    init {
+        for ((k, v) in prefs.all) if (v is Float) state[k] = v.toDouble()
+        // carry the last % over from the previous version's storage
+        if (!state.containsKey("soc")) {
+            val old = ctx.getSharedPreferences("battery", Context.MODE_PRIVATE)
+            old.getFloat("soc", -1f).takeIf { it >= 0 }?.let { state["soc"] = it.toDouble() }
+            old.getFloat("thrIdle", -1f).takeIf { it >= 0 }?.let { state["thrIdle"] = it.toDouble() }
+        }
+        core = BatteryCore(state)
+        core.fixedSeries = ctx.getSharedPreferences("app", Context.MODE_PRIVATE).getInt("packSeries", 0)
+    }
 
     /** Last known estimate (persisted), or -1 if never measured. */
-    val current: Double get() = soc
-    val learnedSeries get() = series
-    val fullVolts get() = if (series > 0) series * 4.2 else 0.0
-    /** True while the shown % is a held value (on the throttle, voltage sagging). */
-    var holding = false; private set
+    val current: Double get() = core.soc
+    val learnedSeries get() = core.series
+    val fullVolts get() = if (core.series > 0) core.series * 4.2 else 0.0
+    val holding get() = core.holding
+    /** Best estimate of the battery's resting voltage (what the % is based on). */
+    val restingVolts get() = core.lastOcv
 
-    /** Feed one realtime sample (~every 0.7 s); returns the % (0–100), or -1 if unknown yet. */
     fun update(batteryV: Double, throttleV: Double, speedRpm: Int): Double {
-        if (batteryV < 5.0) return soc                          // junk / disconnected
-        if (idleThrottle < 0 || throttleV < idleThrottle) idleThrottle = throttleV
-        val onThrottle = throttleV > idleThrottle + 0.15
-        val accelerating = speedRpm - lastSpeed > 30
-        lastSpeed = speedRpm
-        offThrottle = if (onThrottle || accelerating) 0 else offThrottle + 1
-        parked = if (speedRpm == 0 && !onThrottle) parked + 1 else 0
-
-        val recovered = offThrottle >= 4                        // ~3 s off: sag has recovered
-        holding = !recovered
-        if (!recovered) { recent.clear(); return soc }          // on the throttle: hold, no guessing
-        recent.addLast(batteryV); if (recent.size > 5) recent.removeFirst()
-        val v = recent.sorted()[recent.size / 2]                // median: one noisy reading can't move the %
-
-        // pack size: from Settings, else learned from the highest resting voltage
-        if (v > maxRestV) maxRestV = v
-        if (v < minRestV && v > 10.0) minRestV = v
-        if (fixedSeries > 0) series = fixedSeries
-        else {
-            val s = (maxRestV / 4.2).roundToInt().coerceIn(1, 30)
-            if (series == 0 || s > series) series = s
-        }
-
-        val target = pctFromCell(v / series)
-        soc = when {
-            soc < 0 || !hadGoodReading -> target                  // first good reading: take it
-            parked >= 12 -> soc + (target - soc) * 0.25          // parked ~8 s+: true resting value
-            target < soc -> soc + (target - soc) * 0.10          // coasting: follow the drop
-            else -> soc + (target - soc) * 0.02                  // coasting, higher (regen/recovery): rise slowly
-        }.coerceIn(0.0, 100.0)
-        hadGoodReading = true
+        val r = core.update(batteryV, throttleV, speedRpm)
         maybeSave()
-        return soc
+        return r
     }
 
     private fun maybeSave() {
         val now = System.currentTimeMillis()
         if (now - lastSaveMs < 20000) return
         lastSaveMs = now
-        prefs.edit()
-            .putInt("series", series)
-            .putFloat("maxRestV", maxRestV.toFloat())
-            .putFloat("minRestV", if (minRestV < 900) minRestV.toFloat() else 999f)
-            .putFloat("soc", soc.toFloat())
-            .putFloat("thrIdle", idleThrottle.toFloat())
-            .apply()
+        val e = prefs.edit()
+        for ((k, v) in state) e.putFloat(k, v.toFloat())
+        e.apply()
     }
 
     fun save() { lastSaveMs = 0; maybeSave() }
 
-    /** One-line description of what it has learned, for diagnostics. */
+    /** Plain-English description of what it has learned. */
     fun summary(): String {
-        val full = if (series > 0) "%.1fV".format(series * 4.2) else "?"
-        val seenHi = if (maxRestV > 0) "%.1fV".format(maxRestV) else "–"
-        val seenLo = if (minRestV < 900) "%.1fV".format(minRestV) else "–"
-        return "pack ${if (series > 0) "${series}S (full≈$full)" else "learning…"}, resting voltage seen $seenLo–$seenHi"
+        val s = core.series
+        val pack = if (s > 0) "${s}S pack (full ${"%.1f".format(s * 4.2)} V, empty ${"%.1f".format(s * 3.0)} V)" else "pack size: learning…"
+        val sag = core.predictSag(1.0, 0.0)?.let { "learned from ${core.sagSamples} throttle releases (≈${"%.1f".format(it)} V at full throttle)" }
+            ?: "learning (${core.sagSamples}/5 throttle releases)"
+        val relax = if (core.relaxSamples > 0) "learned from ${core.relaxSamples} stops (${"%.0f".format(core.relaxRatio * 100)}% of sag)" else "typical value until you stop for a minute after riding"
+        return "$pack\nVoltage sag: $sag\nRecovery after letting go: $relax"
     }
 }

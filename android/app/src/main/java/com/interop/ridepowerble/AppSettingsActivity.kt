@@ -80,7 +80,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             choice("🔌", "Battery voltage", "packSeries", listOf("Auto-detect" to 0, "36 V (10S, 42 V full)" to 10,
                 "48 V (13S, 54.6 V full)" to 13, "52 V (14S, 58.8 V full)" to 14, "60 V (16S, 67.2 V full)" to 16,
                 "72 V (20S, 84 V full)" to 20), 0) {
-                getSharedPreferences("battery", Context.MODE_PRIVATE).edit().remove("soc").remove("series").apply()
+                getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().remove("soc").remove("series").apply()
                 prefs().edit().putBoolean("resetLearners", true).apply() }
             line()
             val rtV = BleManager.lastRealtime?.batteryV
@@ -190,7 +190,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
 
     private fun confirmResetBattery() = confirm("Reset battery learning?",
         "VoltRoute forgets your pack size and range per %, and learns them again over your next rides. Use this after changing battery.") {
-        getSharedPreferences("battery", Context.MODE_PRIVATE).edit().clear().apply()
+        getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().clear().apply(); getSharedPreferences("battery", Context.MODE_PRIVATE).edit().clear().apply()
         getSharedPreferences("range", Context.MODE_PRIVATE).edit().clear().apply()
         prefs().edit().putBoolean("resetLearners", true).apply()
         toast("Battery learning reset"); build()
@@ -216,7 +216,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 if (f < 0.85 || f > 1.15) { toast("That's more than 15% off — check the number"); return@setPositiveButton }
                 BleManager.voltCal = f
                 prefs().edit().putFloat("voltCal", f.toFloat()).apply()
-                getSharedPreferences("battery", Context.MODE_PRIVATE).edit().remove("soc").apply()
+                getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().remove("soc").apply()
                 prefs().edit().putBoolean("resetLearners", true).apply()
                 toast("Calibrated"); build()
             }
