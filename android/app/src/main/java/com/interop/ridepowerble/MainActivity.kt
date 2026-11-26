@@ -686,9 +686,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             if (seq == searchSeq && resultsCard.childCount == 1 && (resultsCard.getChildAt(0) as? TextView)?.text == "Searching…")
                 showResultsMessage("Search is slow right now — check your signal and try again")
         }, 15000)
+        // instant: shops already loaded / drawn on the map around you
+        val local = localMatches(q)
+        if (local.isNotEmpty() && !enter) showPlaces(Router.rank(local, q, null, null, near), near, q, null, false)
         searchExec.execute {
             if (!enter) {
-                val quick = Router.smartSearch(q, near, false, alive)
+                val quick = Router.smartSearch(q, near, false, alive, local)
                 if (!alive()) return@execute
                 runOnUiThread { if (seq == searchSeq) showPlaces(quick, near, q, null, !wantDeep) }
                 if (!wantDeep) return@execute
@@ -696,7 +699,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 if (seq != searchSeq) return@execute
             }
             if (!alive()) return@execute
-            val deep = Router.smartSearch(q, near, true, alive)
+            val deep = Router.smartSearch(q, near, true, alive, local)
             runOnUiThread {
                 if (seq != searchSeq) return@runOnUiThread
                 val best = localFirst(deep, near)
@@ -704,6 +707,30 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 else showPlaces(deep, near, q, null, true)
             }
         }
+    }
+
+    /** Places matching the query among what's already on the map (no network needed). */
+    private fun localMatches(q: String): List<Router.Place> {
+        val words = Router.searchWords(q)
+        if (words.isEmpty()) return emptyList()
+        val out = LinkedHashMap<String, Router.Place>()
+        fun hit(name: String) = Router.compact(name).let { n -> words.any { n.contains(it) } }
+        for (p in pois) if (hit(p.name)) out.putIfAbsent(p.name + p.lat, Router.Place(p.name, p.lat, p.lon, p.name, p.sub, p.cat))
+        try {
+            val m = map; val st = m?.style
+            if (m != null && st != null) {
+                val ids = st.layers.filter { it.id != "poi-l" && ((it as? SymbolLayer)?.sourceLayer == "poi" || it.id.startsWith("poi")) }
+                    .map { it.id }.toTypedArray()
+                if (ids.isNotEmpty()) for (f in m.queryRenderedFeatures(android.graphics.RectF(0f, 0f, mapView.width.toFloat(), mapView.height.toFloat()), *ids)) {
+                    val name = (if (f.hasProperty("name")) f.getStringProperty("name") else null) ?: continue
+                    val g = f.geometry() as? org.maplibre.geojson.Point ?: continue
+                    if (!hit(name)) continue
+                    val cls = if (f.hasProperty("subclass")) f.getStringProperty("subclass") ?: "" else ""
+                    out.putIfAbsent(name + g.latitude(), Router.Place(name, g.latitude(), g.longitude(), name, "", cls))
+                }
+            }
+        } catch (_: Exception) {}
+        return out.values.toList()
     }
 
     private fun categorySearch(label: String, q: String) {

@@ -34,6 +34,16 @@ object Router {
      * biased toward where you are. Falls back to Nominatim if Photon is unavailable.
      */
     fun suggest(query: String, near: Pt?): List<Place> {
+        val r = photon(query, near)
+        return if (r.isNotEmpty() || System.currentTimeMillis() > photonDownUntil) r else geocode(query, near, false)
+    }
+
+    /** Photon is fast but sometimes overloaded; after a failure skip it for a while. */
+    @Volatile private var photonDownUntil = 0L
+    private val searchPool = java.util.concurrent.Executors.newCachedThreadPool()
+
+    private fun photon(query: String, near: Pt?): List<Place> {
+        if (System.currentTimeMillis() < photonDownUntil) return emptyList()
         return try {
             val q = URLEncoder.encode(query, "UTF-8")
             var url = "https://photon.komoot.io/api/?q=$q&limit=8&lang=en"
@@ -56,7 +66,11 @@ object Router {
                 out.add(Place(if (sub.isEmpty()) title else "$title, $sub", lat, lon, title, sub, s("osm_value")))
             }
             out
-        } catch (e: Exception) { lastError = e.javaClass.simpleName; geocode(query, near, false) }
+        } catch (e: Exception) {
+            lastError = e.javaClass.simpleName
+            photonDownUntil = System.currentTimeMillis() + 90_000
+            emptyList()
+        }
     }
 
     @Volatile var lastError: String? = null
@@ -184,25 +198,45 @@ object Router {
      * Search that understands real-world queries like "lodge road coop":
      * type-ahead results + brand aliases + nearby OSM shop names + street matching, ranked.
      */
-    fun smartSearch(query: String, near: Pt?, deep: Boolean, alive: () -> Boolean = { true }): List<Place> {
+    fun smartSearch(query: String, near: Pt?, deep: Boolean, alive: () -> Boolean = { true },
+                    extra: List<Place> = emptyList()): List<Place> {
         val pool = LinkedHashMap<String, Place>()
-        fun add(list: List<Place>) { for (p in list) pool.putIfAbsent("${p.title.lowercase()}|${"%.4f".format(p.lat)}|${"%.4f".format(p.lon)}", p) }
+        fun add(list: List<Place>) { for (p in list) pool.putIfAbsent("${p.title.lowercase()}|${"%.3f".format(p.lat)}|${"%.3f".format(p.lon)}", p) }
+        add(extra)
         if (!alive()) return emptyList()
-        add(suggest(query, near))
         val al = aliased(query)
-        if (al != query.lowercase() && alive()) add(suggest(al, near))
         val (street, nameWords) = parseQuery(al)
-        var streetPt: Pt? = null
-        if (deep && near != null && alive()) {
-            if (street != null) {
-                streetPt = suggest(street, near).firstOrNull { it.cat in setOf("residential", "primary", "secondary", "tertiary",
-                    "unclassified", "living_street", "trunk", "service", "pedestrian", "road", "street") || it.title.lowercase().contains(street.substringBefore(" ")) }
-                    ?.let { Pt(it.lat, it.lon) }
-            }
-            if (nameWords.isNotEmpty() && alive()) add(overpassNames(nameWords, streetPt ?: near))
+        // every source runs at the same time; whatever answers before the deadline is used
+        val photonOk = System.currentTimeMillis() >= photonDownUntil
+        val jobs = ArrayList<java.util.concurrent.Future<List<Place>>>()
+        fun job(f: () -> List<Place>) { jobs += searchPool.submit(java.util.concurrent.Callable { try { f() } catch (e: Exception) { emptyList<Place>() } }) }
+        job { photon(query, near) }
+        if (al != query.lowercase()) job { photon(al, near) }
+        if (deep || !photonOk) job { geocode(al, near, false) }
+        if (deep && near != null && nameWords.isNotEmpty()) job { overpassNames(nameWords, near) }
+        val streetJob = if (deep && street != null) searchPool.submit(java.util.concurrent.Callable {
+            try { photon(street, near).ifEmpty { geocode(street, near, false) } } catch (e: Exception) { emptyList<Place>() } }) else null
+        val deadline = System.currentTimeMillis() + (if (deep) 9000 else 4500)
+        for (j in jobs) {
+            if (!alive()) { jobs.forEach { it.cancel(true) }; return emptyList() }
+            try { add(j.get(maxOf(1L, deadline - System.currentTimeMillis()), java.util.concurrent.TimeUnit.MILLISECONDS)) }
+            catch (e: Exception) { j.cancel(true) }
         }
+        val streetPt = try {
+            streetJob?.get(maxOf(1L, deadline - System.currentTimeMillis()), java.util.concurrent.TimeUnit.MILLISECONDS)
+                ?.firstOrNull { it.cat in setOf("residential", "primary", "secondary", "tertiary", "unclassified", "living_street",
+                    "trunk", "service", "pedestrian", "road", "street") || it.title.lowercase().contains(street!!.substringBefore(" ")) }
+                ?.let { Pt(it.lat, it.lon) }
+        } catch (e: Exception) { streetJob?.cancel(true); null }
         return rank(pool.values.toList(), al, street, streetPt, near)
     }
+
+    /** Lower-case letters/digits only, so "Co-op Food" and "coop" can be compared. */
+    fun compact(t: String) = t.lowercase().filter { it.isLetterOrDigit() }
+
+    /** The meaningful words of a query, brand aliases applied, compacted ("coop", "winterbourne"). */
+    fun searchWords(q: String) = norm(aliased(q)).split(" ").filter { it.length >= 3 && it !in STOP }.map { compact(it) }
+        .plus(aliased(q).split(" ").map { compact(it) }.filter { it.length >= 3 }).distinct()
 
     internal fun rank(places: List<Place>, q: String, street: String?, streetPt: Pt?, near: Pt?): List<Place> {
         val qWords = norm(q).split(" ").filter { it.isNotEmpty() && it !in STOP }.map { expandStreetWord(it) }
@@ -215,6 +249,7 @@ object Router {
                 when {
                     title.split(" ").any { it == w } || titleJoined.contains(wj) -> sc += 12
                     hay.contains(w) -> sc += 8
+                    w.length >= 5 && hay.split(" ").any { oneEdit(it, w) } -> sc += 7     // small typo
                 }
             }
             if (street != null && norm(p.subtitle).contains(street)) sc += 14
@@ -224,6 +259,19 @@ object Router {
             return sc
         }
         return places.sortedByDescending { score(it) }
+    }
+
+    /** True if a and b differ by at most one inserted, deleted or changed letter. */
+    internal fun oneEdit(a: String, b: String): Boolean {
+        if (a == b) return true
+        if (abs(a.length - b.length) > 1 || a.length < 4) return false
+        var i = 0; var j = 0; var edits = 0
+        while (i < a.length && j < b.length) {
+            if (a[i] == b[j]) { i++; j++; continue }
+            if (++edits > 1) return false
+            when { a.length > b.length -> i++; a.length < b.length -> j++; else -> { i++; j++ } }
+        }
+        return edits + (a.length - i) + (b.length - j) <= 1
     }
 
     private fun dist(a: Pt, p: Place): Double {
@@ -239,7 +287,7 @@ object Router {
             if (pat.isEmpty()) return emptyList()
             val q = "[out:json][timeout:10];nwr(around:8000,${around.lat},${around.lon})[\"name\"~\"$pat\",i]" +
                     "[~\"^(shop|amenity|leisure|tourism|office|craft)$\"~\".\"];out center tags 40;"
-            val els = JSONObject(overpass(q, 5000, 9000)).getJSONArray("elements")
+            val els = JSONObject(overpass(q, 4000, 7000)).getJSONArray("elements")
             val out = ArrayList<Place>()
             for (i in 0 until els.length()) {
                 val e = els.getJSONObject(i)
