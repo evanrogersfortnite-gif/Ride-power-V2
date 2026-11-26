@@ -52,13 +52,14 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
     private fun s(k: String, v: Double) { st[k] = v }
 
     // ---- live state (not persisted) ----
-    private var lastRpm = 0
+    private var lastMph = 0.0
     private var onSamples = 0
     private var offSamples = 0
     private var parkedSamples = 0
     private var hadGood = false
     private val loadV = ArrayDeque<Double>()          // last few on-throttle voltages
-    private var relLoadV = 0.0; private var relThr = 0.0; private var relRpm = 0.0  // at the moment of release
+    private var relLoadV = 0.0; private var relThr = 0.0; private var relRpm = 0.0  // at the moment of release (relRpm = speed, mph)
+    private val speeds = ArrayDeque<Double>()          // last few motor speeds (mph), to spot powered cruising
     private var relV3 = 0.0                            // recovered voltage ~3 s after release
     private var relSag = 0.0                           // sag seen at that release
     private var sinceRelease = 1e9                     // seconds since the last release
@@ -74,7 +75,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
     val relaxRatio get() = g("relax", 0.12)
     val relaxSamples get() = g("relaxN", 0.0).toInt()
 
-    /** Predicted sag (V) at a throttle fraction and motor rpm, or null until learned. */
+    /** Predicted sag (V) at a throttle fraction and motor speed (mph), or null until learned. */
     fun predictSag(thrFrac: Double, rpm: Double): Double? {
         if (g("n", 0.0) < 5) return null
         // solve the 2x2 least-squares system  [Sxx Sxy; Sxy Syy] [a b] = [Sxs Sys]
@@ -83,17 +84,22 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         val det = sxx * syy - sxy * sxy
         val (a, b) = if (det > 1e-6) ((sxs * syy - sys * sxy) / det) to ((sys * sxx - sxs * sxy) / det)
                      else (if (sxx > 0) sxs / sxx else 0.0) to 0.0
-        return (a.coerceIn(0.0, 25.0) * thrFrac + b.coerceIn(0.0, 10.0) * rpm / 1000.0).coerceIn(0.0, 15.0)
+        return (a.coerceIn(0.0, 25.0) * thrFrac + b.coerceIn(0.0, 10.0) * rpm / 20.0).coerceIn(0.0, 15.0)
     }
 
     private fun learnSag(thrFrac: Double, rpm: Double, sag: Double) {
-        val x = thrFrac; val y = rpm / 1000.0; val k = 0.97     // older samples fade (pack ages, temperature)
+        val x = thrFrac; val y = rpm / 20.0; val k = 0.97     // older samples fade (pack ages, temperature)
         s("sxx", g("sxx", 0.0) * k + x * x); s("sxy", g("sxy", 0.0) * k + x * y); s("syy", g("syy", 0.0) * k + y * y)
         s("sxs", g("sxs", 0.0) * k + x * sag); s("sys", g("sys", 0.0) * k + y * sag)
         s("n", g("n", 0.0) + 1)
     }
 
-    fun update(v: Double, throttleV: Double, rpm: Int): Double {
+    /**
+     * [mph] = motor/wheel speed from the controller (0 when stopped). [cruise]/[brake] = controller flags.
+     * Cruise control powers the motor with the throttle at rest, so it counts as load.
+     */
+    fun update(v: Double, throttleV: Double, mph: Double, cruise: Boolean = false, brake: Boolean = false): Double {
+        val rpm = mph
         if (v < 5.0) return soc
         var idle = g("thrIdle", -1.0)
         // throttle resting level: hall throttles sit ~0.8 V. Never learn it from a reading above 1 V,
@@ -102,17 +108,21 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         if (throttleV > g("thrMax", 0.0)) s("thrMax", throttleV)
         val span = (g("thrMax", 0.0) - idle).coerceAtLeast(0.5)
         val thrFrac = ((throttleV - idle) / span).coerceIn(0.0, 1.0)
-        val on = throttleV > idle + 0.15 || rpm - lastRpm > 30
-        lastRpm = rpm
+        // powered with the throttle at rest = cruise (flag), or speed held steady above 8 mph for ~3 s
+        // (coasting always slows down); braking = regen pushes voltage up, so don't read it either
+        speeds.addLast(mph); if (speeds.size > 5) speeds.removeFirst()
+        val holdingSpeed = speeds.size == 5 && mph > 8 && mph >= speeds.first() - 0.4
+        val on = throttleV > idle + 0.15 || cruise || brake || holdingSpeed || mph - lastMph > 1.0
+        lastMph = mph
         sinceRelease += DT
 
         if (on) {
             onSamples++; offSamples = 0; parkedSamples = 0; recent.clear()
             loadV.addLast(v); if (loadV.size > 3) loadV.removeFirst()
-            relThr = thrFrac; relRpm = rpm.toDouble()
+            relThr = thrFrac; relRpm = rpm
             holding = true
             // long stretch on the throttle: use the learned sag to keep the % honest (only ever downward)
-            val sag = predictSag(thrFrac, rpm.toDouble())
+            val sag = predictSag(thrFrac, rpm)
             if (sag != null && onSamples >= 4 && hadGood && series > 0) {
                 lastOcv = v + sag
                 val target = pctFromCell(lastOcv / series)
@@ -129,7 +139,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         }
         onSamples = 0; loadV.clear()
         offSamples++
-        parkedSamples = if (rpm == 0) parkedSamples + 1 else 0
+        parkedSamples = if (mph < 0.5) parkedSamples + 1 else 0
         if (offSamples < 4) { holding = true; return soc }     // ~3 s for the sag to recover
         holding = false
 

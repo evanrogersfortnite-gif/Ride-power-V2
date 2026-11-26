@@ -273,7 +273,8 @@ object Router {
         if (deep && near != null && nameWords.isNotEmpty()) job { overpassNames(nameWords, near) }
         // "winterbourne coop": find the place "Winterbourne", then the shop near it
         val anchor = java.util.concurrent.atomic.AtomicReference<Place?>(null)
-        if (deep && street == null && nameWords.size >= 2) {
+        // also with a street ("coop gloucester road bishopston"): the area pins down which part of a long road
+        if (deep && nameWords.size >= 2) {
             val known = extra
             for (w in nameWords.filter { it.length >= 5 }.take(2)) job {
                 val loc = findLocality(w, near, known) ?: return@job emptyList()
@@ -300,7 +301,7 @@ object Router {
             // rank by the shop words, close to that place; the place itself is still offered
             val locWord = norm(loc.title)
             val rest = nameWords.filter { w -> locWord.split(" ").none { it == w || oneEdit(it, w) } }.joinToString(" ")
-            return rank(pool.values.toList(), rest.ifEmpty { al }, null, Pt(loc.lat, loc.lon), near)
+            return rank(pool.values.toList(), rest.ifEmpty { al }, street, Pt(loc.lat, loc.lon), near)
         }
         return rank(pool.values.toList(), al, street, streetPt, near)
     }

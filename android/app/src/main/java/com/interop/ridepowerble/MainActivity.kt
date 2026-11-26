@@ -206,6 +206,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         learner = TripLearner(this)
         range = RangeLearner(this)
         rideLog = RideLogger(this)
+        BleManager.motorK = prefs().getFloat("motorK", 3820f).toDouble()
         trafficOn = prefs().getBoolean("traffic", false) && trafficKey().isNotEmpty()
         muted = prefs().getBoolean("muted", false)
         routeProfile = prefs().getString("defProfile", "trekking") ?: "trekking"
@@ -575,13 +576,19 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         hudRow.addView(speedCard)
         hudRow.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
         // bike status chips (cruise / reverse / brake / anti-theft / cruise countdown) above the cards
-        statusRow = LinearLayout(this).apply { visibility = View.GONE }
         hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        hud.addView(statusRow, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = dp(8) })
         hud.addView(hudRow)
         frame.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP).apply {
             gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(14), 0, 0, dp(14))
         })
+        // status chips float independently just above the cards (so they can never disturb the cards)
+        statusRow = LinearLayout(this).apply { visibility = View.GONE; isClickable = false }
+        frame.addView(statusRow, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.BOTTOM or Gravity.START; leftMargin = dp(14) })
+        hud.addOnLayoutChangeListener { v, _, top, _, bottom, _, _, _, _ ->
+            val lp = statusRow.layoutParams as FrameLayout.LayoutParams
+            val want = (v.parent as View).height - top + dp(4)
+            if (lp.bottomMargin != want && bottom > top) { lp.bottomMargin = want; statusRow.layoutParams = lp }
+        }
     }
     private val BAR_W = 54
 
@@ -675,6 +682,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(routeCard, mode == Mode.ROUTES)
         vis(sheet, mode == Mode.PLACE || mode == Mode.ROUTES || mode == Mode.ARRIVED)
         vis(hud, mode == Mode.BROWSE || mode == Mode.NAV)
+        if (hud.visibility != View.VISIBLE) statusRow.visibility = View.GONE
         vis(myLocBtn, mode == Mode.BROWSE)
         vis(gearBtn, mode == Mode.BROWSE)
         vis(trafficBtn, mode != Mode.ARRIVED)
@@ -1492,6 +1500,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val c = map?.cameraPosition?.target
             if (c == null || Geo.dist(c.latitude, c.longitude, ll.latitude, ll.longitude) > 6) moveTo(ll, null, 900)
         }
+        // calibrate the controller's speed field against GPS (wheel size): mph × raw ≈ constant
+        BleManager.lastRealtime?.let { rt ->
+            if (BleManager.connected && loc.hasSpeed() && loc.speed > 3.6f && loc.accuracy < 15f && rt.speedRpm in 80..2000) {
+                val k = loc.speed * 2.2369363 * rt.speedRpm
+                if (k in 1000.0..12000.0) {
+                    BleManager.motorK = BleManager.motorK * 0.98 + k * 0.02
+                    if (++motorKSamples % 30 == 0) prefs().edit().putFloat("motorK", BleManager.motorK.toFloat()).apply()
+                }
+            }
+        }
         // average moving speed this ride (for range estimates)
         if (loc.hasSpeed() && loc.speed > 1.5f && loc.accuracy < 30f) {
             val now = System.currentTimeMillis()
@@ -1533,10 +1551,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     // ============================ battery ============================
     override fun onRealtime(d: BleManager.Realtime) = runOnUiThread {
-        val pct = estimator.update(d.batteryV, d.throttleV, d.speedRpm)
+        val pct = estimator.update(d.batteryV, d.throttleV, d.motorMph, d.cruise, d.brake)
         val l = lastLoc
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
-            d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong)
+            d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph)
         if (d.batteryV > 5) { tvVolts.text = "%.1f V".format(d.batteryV); tvVolts.visibility = View.VISIBLE }
         showBikeStatus(d)
         lastVolts = d.batteryV
@@ -1567,7 +1585,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         if (d.reverse && !wasReverse) speak("Reverse")
         if (!d.cruise && steadySecs > hold + 6 && !cruiseTipShown) {
             cruiseTipShown = true
-            toast("Cruise didn't switch on — your controller may need cruise enabled (often a wire or button)")
+            toast("Cruise didn't switch on — while holding steady, hold − on the display for 2–3 s")
         }
         wasCruise = d.cruise; wasReverse = d.reverse
         // faults: announce each new one
@@ -1579,26 +1597,32 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
         lastFault = d.fault
 
-        statusRow.removeAllViews()
-        fun chip(t: String, bg: Int) = statusRow.addView(TextView(this).apply {
-            text = t; textSize = 13f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD)
-            setPadding(dp(12), dp(6), dp(12), dp(6)); background = shape(bg, dp(14)); elevation = dp(4).toFloat()
-        }, LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(6) })
-        if (d.cruise) chip("⏵ CRUISE", 0xFF188038.toInt())
+        // build the wanted chips; only touch the views when something actually changed (no flicker)
+        val want = ArrayList<Pair<String, Int>>()
+        if (d.cruise) want += "⏵ CRUISE" to 0xFF188038.toInt()
         else if (steadySecs >= 1.4) {
             val left = kotlin.math.ceil(hold - steadySecs).toInt()
-            if (left > 0) chip("Hold steady… cruise in ${left}s", BLUE)
+            if (left > 0) want += "Hold steady + hold − on display… ${left}s" to BLUE
         }
-        if (d.reverse) chip("◀ REVERSE", 0xFFE37400.toInt())
-        if (d.brake) chip("BRAKE", RED)
-        if (d.antiTheft) chip("🔒 ANTI-THEFT", 0xFF5F6368.toInt())
-        if (d.fault != 0) chip("⚠ " + d.faults.first(), RED)
-        statusRow.visibility = if (statusRow.childCount > 0) View.VISIBLE else View.GONE
+        if (d.reverse) want += "◀ REVERSE" to 0xFFE37400.toInt()
+        if (d.brake) want += "BRAKE" to RED
+        if (d.antiTheft) want += "🔒 ANTI-THEFT" to 0xFF5F6368.toInt()
+        if (d.fault != 0) want += ("⚠ " + d.faults.first()) to RED
+        if (want != shownChips) {
+            shownChips = want
+            statusRow.removeAllViews()
+            for ((t, bg) in want) statusRow.addView(TextView(this).apply {
+                text = t; textSize = 13f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD)
+                setPadding(dp(12), dp(6), dp(12), dp(6)); background = shape(bg, dp(14)); elevation = dp(4).toFloat()
+            }, LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(6) })
+        }
+        statusRow.visibility = if (want.isNotEmpty() && hud.visibility == View.VISIBLE) View.VISIBLE else View.GONE
     }
+    private var shownChips: List<Pair<String, Int>> = emptyList()
 
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
         if (!backgrounded) tuneGps()
-        if (!connected) { statusRow.removeAllViews(); statusRow.visibility = View.GONE }
+        if (!connected) { statusRow.removeAllViews(); shownChips = emptyList(); statusRow.visibility = View.GONE }
         if (!connected) tvVolts.visibility = View.GONE
         if (!connected) showBatt(lastPct, false)
     }
@@ -1785,6 +1809,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         gpsFast = fast
     }
     private var gpsFast = false
+    private var motorKSamples = 0
 
     /** Switch GPS rate when navigation starts/stops or the bike connects. */
     private fun tuneGps() { if ((mode == Mode.NAV || BleManager.connected) != gpsFast) startLocation() }

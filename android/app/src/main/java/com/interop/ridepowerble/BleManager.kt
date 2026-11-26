@@ -33,9 +33,17 @@ object BleManager {
         val antiTheft get() = workState and 0x20 != 0
         val cruise get() = workState and 0x40 != 0
         val brake get() = workState and 0x80 != 0
+        /**
+         * The "speed" field is NOT rpm: it's the time between motor pulses (smaller = faster,
+         * 30000 = stopped). On this bike mph × value ≈ 3820 (learned from GPS; see [motorK]).
+         */
+        val motorMph: Double get() = if (speedRpm <= 0 || speedRpm >= 20000) 0.0 else motorK / speedRpm
         /** Fault names for each set bit of the fault byte (official app's decoding). */
         val faults: List<String> get() = FAULTS.filterIndexed { i, _ -> fault and (1 shl i) != 0 }
     }
+
+    /** mph × speed-field constant (wheel size dependent); refined from GPS while riding. */
+    @Volatile var motorK = 3820.0
 
     val FAULTS = listOf("Under voltage", "Throttle error", "Motor phase lost", "Controller MOSFET error",
         "Over current", "Current sensor or over temperature", "Motor stalled", "Hall sensor error")

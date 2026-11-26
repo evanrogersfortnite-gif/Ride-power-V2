@@ -27,7 +27,7 @@ class RideLogger(ctx: Context) {
     private var lines = 0
 
     fun log(lat: Double?, lon: Double?, mph: Double?, acc: Float?, volts: Double?, throttle: Double?, rpm: Int?,
-            pct: Double, holding: Boolean, mode: String, along: Double) {
+            pct: Double, holding: Boolean, mode: String, along: Double, workState: Int? = null, motorMph: Double? = null) {
         val now = System.currentTimeMillis()
         if (now - lastLineAt < 900) return
         try {
@@ -37,7 +37,8 @@ class RideLogger(ctx: Context) {
             writer!!.append(listOf(
                 SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(now)), f(lat, 6), f(lon, 6), f(mph, 1),
                 acc?.let { "%.0f".format(Locale.US, it) } ?: "", f(volts, 2), f(throttle, 2), rpm?.toString() ?: "",
-                if (pct >= 0) f(pct, 1) else "", if (holding) "1" else "0", mode, f(along, 0)
+                if (pct >= 0) f(pct, 1) else "", if (holding) "1" else "0", mode, f(along, 0),
+                workState?.toString() ?: "", f(motorMph, 1)
             ).joinToString(",")).append('\n')
             if (++lines % 20 == 0) writer!!.flush()
         } catch (_: Exception) {}
@@ -48,7 +49,7 @@ class RideLogger(ctx: Context) {
         val name = "ride-" + SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.US).format(Date(now)) + ".csv"
         file = File(dir, name)
         writer = FileWriter(file!!, true).apply {
-            append("time,lat,lon,gps_mph,gps_acc_m,battery_v,throttle_v,motor_rpm,battery_pct,pct_held,mode,route_m\n")
+            append("time,lat,lon,gps_mph,gps_acc_m,battery_v,throttle_v,motor_raw,battery_pct,pct_held,mode,route_m,work_state,motor_mph\n")
         }
         // keep the newest 20 rides
         dir.listFiles()?.sortedByDescending { it.name }?.drop(20)?.forEach { it.delete() }

@@ -26,6 +26,12 @@ class BatteryEstimator(ctx: Context) {
         }
         // one-time: drop a % copied from the old estimator by the previous update
         if ((state["ver"] ?: 0.0) < 3.0) { state.remove("soc"); state["ver"] = 3.0; prefs.edit().remove("soc").putFloat("ver", 3f).apply() }
+        // v4: sag model was learned with the speed field misread as rpm — relearn it
+        if ((state["ver"] ?: 0.0) < 4.0) {
+            val e = prefs.edit()
+            for (k in listOf("sxx", "sxy", "syy", "sxs", "sys", "n")) { state.remove(k); e.remove(k) }
+            state["ver"] = 4.0; e.putFloat("ver", 4f).apply()
+        }
         core = BatteryCore(state)
         core.fixedSeries = ctx.getSharedPreferences("app", Context.MODE_PRIVATE).getInt("packSeries", 0)
     }
@@ -38,8 +44,8 @@ class BatteryEstimator(ctx: Context) {
     /** Best estimate of the battery's resting voltage (what the % is based on). */
     val restingVolts get() = core.lastOcv
 
-    fun update(batteryV: Double, throttleV: Double, speedRpm: Int): Double {
-        val r = core.update(batteryV, throttleV, speedRpm)
+    fun update(batteryV: Double, throttleV: Double, mph: Double, cruise: Boolean, brake: Boolean): Double {
+        val r = core.update(batteryV, throttleV, mph, cruise, brake)
         maybeSave()
         return r
     }
