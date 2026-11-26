@@ -9,8 +9,8 @@ import kotlin.math.roundToInt
  * The controller sends voltage only (no current), and voltage sags hard while you're on the
  * throttle, then recovers within a second or two when you let go. So:
  *
- *  - The % comes from the standard e-bike Li-ion chart (per cell: 4.20 V = 100%,
- *    3.76 V = 50%, 3.50 V = 20%, 3.00 V = 0%; for a 52 V/14S pack 58.8 / 52.6 / 49.0 / 42 V).
+ *  - The % comes from the rider's e-bike chart (52 V pack: 58.8 V = 100%, 50.4 V = 50%,
+ *    45.4 V = 20%, 42 V = 0% where the pack cuts off); other pack sizes scale per cell.
  *  - It only reads the % from voltages taken after ~3 s OFF the throttle (recovered).
  *    While you're on the throttle it simply HOLDS the last good value — no guessing.
  *  - Coasting, it follows drops smoothly and is slow to rise (ignores regen bumps);
@@ -22,10 +22,14 @@ class BatteryEstimator(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("battery", Context.MODE_PRIVATE)
 
     companion object {
-        /** Per-cell voltage → % (standard e-bike chart, light load). */
-        val CURVE = arrayOf(
-            4.20 to 100.0, 4.10 to 90.0, 4.01 to 80.0, 3.93 to 70.0, 3.84 to 60.0, 3.76 to 50.0,
-            3.67 to 40.0, 3.59 to 30.0, 3.50 to 20.0, 3.40 to 10.0, 3.25 to 5.0, 3.00 to 0.0
+        /** Per-cell voltage → %. 52 V pack: 58.8 V = 100%, 50.4 V = 50%, 45.4 V = 20%, 42.0 V = 0% (cut-off). */
+        val CURVE = arrayOf(   // the rider's e-bike chart, 52 V (14S) column, per cell
+            58.8/14.0 to 100.0, 58.0/14.0 to 95.0, 57.1/14.0 to 90.0, 56.3/14.0 to 85.0,
+            55.4/14.0 to 80.0, 54.6/14.0 to 75.0, 53.8/14.0 to 70.0, 52.9/14.0 to 65.0,
+            52.1/14.0 to 60.0, 51.2/14.0 to 55.0, 50.4/14.0 to 50.0, 49.6/14.0 to 45.0,
+            48.7/14.0 to 40.0, 47.9/14.0 to 35.0, 47.0/14.0 to 30.0, 46.2/14.0 to 25.0,
+            45.4/14.0 to 20.0, 44.5/14.0 to 15.0, 43.7/14.0 to 10.0, 42.8/14.0 to 5.0,
+            42.0/14.0 to 0.0
         )
         fun pctFromCell(v: Double): Double {
             if (v >= CURVE.first().first) return 100.0
