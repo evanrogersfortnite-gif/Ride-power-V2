@@ -51,6 +51,7 @@ class BatteryEstimator(ctx: Context) {
     private var parked = 0               // consecutive samples stopped and off the throttle
     private var hadGoodReading = false   // this session
     private var lastSaveMs = 0L
+    private val recent = ArrayDeque<Double>()   // last few recovered (off-throttle) voltages
 
     /** Last known estimate (persisted), or -1 if never measured. */
     val current: Double get() = soc
@@ -71,18 +72,20 @@ class BatteryEstimator(ctx: Context) {
 
         val recovered = offThrottle >= 4                        // ~3 s off: sag has recovered
         holding = !recovered
-        if (!recovered) return soc                              // on the throttle: hold, no guessing
+        if (!recovered) { recent.clear(); return soc }          // on the throttle: hold, no guessing
+        recent.addLast(batteryV); if (recent.size > 5) recent.removeFirst()
+        val v = recent.sorted()[recent.size / 2]                // median: one noisy reading can't move the %
 
         // pack size: from Settings, else learned from the highest resting voltage
-        if (batteryV > maxRestV) maxRestV = batteryV
-        if (batteryV < minRestV && batteryV > 10.0) minRestV = batteryV
+        if (v > maxRestV) maxRestV = v
+        if (v < minRestV && v > 10.0) minRestV = v
         if (fixedSeries > 0) series = fixedSeries
         else {
             val s = (maxRestV / 4.2).roundToInt().coerceIn(1, 30)
             if (series == 0 || s > series) series = s
         }
 
-        val target = pctFromCell(batteryV / series)
+        val target = pctFromCell(v / series)
         soc = when {
             soc < 0 || !hadGoodReading -> target                  // first good reading: take it
             parked >= 12 -> soc + (target - soc) * 0.25          // parked ~8 s+: true resting value

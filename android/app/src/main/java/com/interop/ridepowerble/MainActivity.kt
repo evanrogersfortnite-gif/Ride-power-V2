@@ -170,6 +170,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private lateinit var battCard: LinearLayout
     private lateinit var battFill: View
     private lateinit var tvRange: TextView
+    private lateinit var tvVolts: TextView
     private lateinit var tvSpeed: TextView
     private lateinit var tvLimit: TextView
     private lateinit var sheet: LinearLayout
@@ -542,6 +543,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         battCard.addView(track, LinearLayout.LayoutParams(dp(64), dp(6)).apply { topMargin = dp(3); bottomMargin = dp(4) })
         tvRange = TextView(this).apply { text = "– mi"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER }
         battCard.addView(tvRange)
+        tvVolts = TextView(this).apply { text = ""; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER; visibility = View.GONE }
+        battCard.addView(tvVolts)
         hud = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
         hud.addView(speedCard)
         hud.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
@@ -1467,6 +1470,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val l = lastLoc
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong)
+        if (d.batteryV > 5) { tvVolts.text = "%.1f V".format(d.batteryV); tvVolts.visibility = View.VISIBLE }
         lastVolts = d.batteryV
         if (pct >= 0) {
             lastPct = pct; range.onSoc(pct)
@@ -1482,6 +1486,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
+        if (!connected) tvVolts.visibility = View.GONE
         if (!connected) showBatt(lastPct, false)
     }
 
