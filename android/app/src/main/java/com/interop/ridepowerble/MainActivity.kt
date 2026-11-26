@@ -281,7 +281,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         srcMe = GeoJsonSource("me").also { it.setGeoJson(empty); st.addSource(it) }
         st.addImage("nav-arrow", makeArrow())
         for ((g, v) in POI_STYLE) st.addImage("poi-$g", makePoiIcon(v.first, v.second))
-        srcPoi = GeoJsonSource("pois").also { it.setGeoJson(poiJson(pois)); st.addSource(it) }
+        srcPoi = GeoJsonSource("pois").also { it.setGeoJson(poiJson(pois + majorPois)); st.addSource(it) }
         val rnd = arrayOf(PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND))
         st.addLayer(LineLayer("route-alt-casing", "route-alt").withProperties(PropertyFactory.lineColor("#8FA3BC"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 5.5f), Expression.stop(15f, 8.5f), Expression.stop(17f, 12.5f), Expression.stop(19f, 21f))), *rnd))
         st.addLayer(LineLayer("route-alt-l", "route-alt").withProperties(PropertyFactory.lineColor("#BCCBDF"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 3.5f), Expression.stop(15f, 6f), Expression.stop(17f, 9f), Expression.stop(19f, 16f))), *rnd))
@@ -310,7 +310,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
             PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
             PropertyFactory.iconSize(1.2f), PropertyFactory.visibility(Property.NONE)))
-        st.addLayerBelow(SymbolLayer("poi-l", "pois").withProperties(
+        // two layers: important places from further out, everything once zoomed in
+        fun poiLayer(id: String) = SymbolLayer(id, "pois").withProperties(
             PropertyFactory.iconImage(Expression.get("icon")), PropertyFactory.iconSize(0.5f),
             PropertyFactory.textField(Expression.get("name")), PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
             PropertyFactory.textSize(12.5f), PropertyFactory.textColor(Expression.toColor(Expression.get("color"))),
@@ -318,7 +319,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(1.2f, 0f)),
             PropertyFactory.textMaxWidth(9f), PropertyFactory.textOptional(true),
             PropertyFactory.symbolSortKey(Expression.get("rank")),
-            PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE)).also { it.setMinZoom(14f) }, "route-alt-casing")
+            PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE))
+        st.addLayerBelow(poiLayer("poi-major").also {
+            it.setFilter(Expression.eq(Expression.get("major"), Expression.literal(1))); it.setMinZoom(12.5f); it.setMaxZoom(14.5f)
+        }, "route-alt-casing")
+        st.addLayerBelow(poiLayer("poi-l").also { it.setMinZoom(14.5f) }, "route-alt-casing")
         if (trafficOn) addTrafficLayer(st)
         redrawRoutes()
         lastLoc?.let { srcMe?.setGeoJson(pointJson(it.latitude, it.longitude)) }
@@ -416,7 +421,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                         l.setProperties(PropertyFactory.fillColor("#F1EEF4"), PropertyFactory.fillOpacity(0.7f))
                 }
                 is SymbolLayer -> {
-                    if (id == "poi-l" || id == "me-arrow" || id == "me-beam") continue
+                    if (id == "poi-l" || id == "poi-major" || id == "me-arrow" || id == "me-beam") continue
                     // the map's italic font renders badly on some phones (garbled names) — use the clean regular one
                     val bold = try { (l.textFont.value as? Array<*>)?.any { it.toString().contains("Bold") } == true } catch (_: Exception) { false }
                     l.setProperties(PropertyFactory.textFont(arrayOf(if (bold) "Noto Sans Bold" else "Noto Sans Regular")))
@@ -860,7 +865,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val parts = name.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
             return words.any { w -> n.contains(w) || (w.length >= 5 && parts.any { Router.oneEdit(it, w) }) }
         }
-        for (p in pois) if (hit(p.name)) out.putIfAbsent(p.name + p.lat, Router.Place(p.name, p.lat, p.lon, p.name, p.sub, p.cat))
+        for (p in pois + majorPois) if (hit(p.name)) out.putIfAbsent(p.name + p.lat, Router.Place(p.name, p.lat, p.lon, p.name, p.sub, p.cat))
         // places you've searched before
         try {
             val arr = JSONArray(prefs().getString("recent", "[]"))
@@ -873,7 +878,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         try {
             val m = map; val st = m?.style
             if (m != null && st != null) {
-                val ids = st.layers.filter { it.id != "poi-l" && ((it as? SymbolLayer)?.sourceLayer == "poi" || it.id.startsWith("poi")) }
+                val ids = st.layers.filter { it.id != "poi-l" && it.id != "poi-major" && ((it as? SymbolLayer)?.sourceLayer == "poi" || it.id.startsWith("poi")) }
                     .map { it.id }.toTypedArray()
                 if (ids.isNotEmpty()) for (f in m.queryRenderedFeatures(android.graphics.RectF(0f, 0f, mapView.width.toFloat(), mapView.height.toFloat()), *ids)) {
                     val name = (if (f.hasProperty("name")) f.getStringProperty("name") else null) ?: continue
@@ -992,9 +997,41 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     // ============================ shops & places on the map ============================
     private fun loadPois() {
         val m = map ?: return
-        if (m.cameraPosition.zoom < 13.5) return
+        val zoom = m.cameraPosition.zoom
         val t = m.cameraPosition.target ?: return
-        loadPoisAround(t.latitude, t.longitude)
+        if (zoom >= 14.5) loadPoisAround(t.latitude, t.longitude)
+        else if (zoom >= 12.0) loadMajorPois(m)
+    }
+
+    // zoomed out: important places only, over the whole visible area
+    private var majorPois: List<Router.Poi> = emptyList()
+    private var majorBox: DoubleArray? = null
+    private var majorLoading = false
+    private fun loadMajorPois(m: MapLibreMap) {
+        if (majorLoading || !prefs().getBoolean("showPois", true)) return
+        val b = m.projection.visibleRegion.latLngBounds
+        val have = majorBox
+        if (have != null && b.latitudeSouth >= have[0] && b.longitudeWest >= have[1] && b.latitudeNorth <= have[2] && b.longitudeEast <= have[3]) return
+        val cLat = (b.latitudeNorth + b.latitudeSouth) / 2; val cLon = (b.longitudeEast + b.longitudeWest) / 2
+        val hLat = minOf(0.06, (b.latitudeNorth - b.latitudeSouth) * 0.75); val hLon = minOf(0.1, (b.longitudeEast - b.longitudeWest) * 0.75)
+        val box = doubleArrayOf(cLat - hLat, cLon - hLon, cLat + hLat, cLon + hLon)
+        majorLoading = true
+        poiExec.execute {
+            val got = Router.fetchPois(box[0], box[1], box[2], box[3], major = true)
+            runOnUiThread {
+                majorLoading = false
+                if (got.isEmpty()) return@runOnUiThread
+                majorPois = got; majorBox = box
+                refreshPoiSource()
+            }
+        }
+    }
+
+    /** Detailed places near you + important places further out, without duplicates. */
+    private fun refreshPoiSource() {
+        val seen = HashSet<String>()
+        val all = (pois + majorPois).filter { seen.add(it.name + "%.4f".format(it.lat) + "%.4f".format(it.lon)) }
+        srcPoi?.setGeoJson(poiJson(all, majorPois.map { it.name + it.lat }.toHashSet()))
     }
 
     /** Loads places in a ~1.5 km box around a point (works while tilted/navigating too). */
@@ -1015,19 +1052,21 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 poiLoading = false
                 if (got.isEmpty()) { poiFailAt = System.currentTimeMillis(); return@runOnUiThread }
                 pois = got; poiBox = box
-                srcPoi?.setGeoJson(poiJson(got))
+                refreshPoiSource()
             }
         }
     }
 
-    private fun poiJson(list: List<Router.Poi>): String {
+    private fun poiJson(list: List<Router.Poi>, major: Set<String> = emptySet()): String {
         val fs = JSONArray()
         for (p in list) {
             val st = POI_STYLE[p.group] ?: POI_STYLE.getValue("place")
+            val important = p.cat in setOf("supermarket", "department_store", "mall", "charging_station", "hospital") || (p.name + p.lat) in major
             fs.put(JSONObject().put("type", "Feature")
                 .put("geometry", JSONObject().put("type", "Point").put("coordinates", JSONArray().put(p.lon).put(p.lat)))
                 .put("properties", JSONObject().put("name", p.name).put("icon", "poi-${p.group}")
-                    .put("color", st.first).put("rank", POI_RANK[p.group] ?: 5)))
+                    .put("color", st.first).put("rank", (POI_RANK[p.group] ?: 5) - (if (important) 10 else 0))
+                    .put("major", if (important) 1 else 0)))
         }
         return JSONObject().put("type", "FeatureCollection").put("features", fs).toString()
     }
@@ -1035,10 +1074,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     /** Nearest drawn place within a finger's width of the tap. */
     private fun poiAt(ll: LatLng): Router.Poi? {
         val m = map ?: return null
-        if (m.cameraPosition.zoom < 14 || !prefs().getBoolean("showPois", true)) return null
+        if (m.cameraPosition.zoom < 12.5 || !prefs().getBoolean("showPois", true)) return null
         val tap = m.projection.toScreenLocation(ll)
         var best: Router.Poi? = null; var bestD = dp(28).toFloat()
-        for (p in pois) {
+        for (p in pois + majorPois) {
             val pt = m.projection.toScreenLocation(LatLng(p.lat, p.lon))
             val d = Math.hypot((pt.x - tap.x).toDouble(), (pt.y - tap.y).toDouble()).toFloat()
             if (d < bestD) { bestD = d; best = p }
@@ -1052,7 +1091,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val st = m.style ?: return null
         val pt = m.projection.toScreenLocation(ll)
         val r = dp(22).toFloat()
-        val ids = st.layers.filter { it.id != "poi-l" && ((it as? SymbolLayer)?.sourceLayer == "poi" || it.id.startsWith("poi")) }
+        val ids = st.layers.filter { it.id != "poi-l" && it.id != "poi-major" && ((it as? SymbolLayer)?.sourceLayer == "poi" || it.id.startsWith("poi")) }
             .map { it.id }.toTypedArray()
         if (ids.isEmpty()) return null
         val feats = m.queryRenderedFeatures(android.graphics.RectF(pt.x - r, pt.y - r, pt.x + r, pt.y + r), *ids)
@@ -1957,7 +1996,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         } else if (p.getBoolean("buildings3d", false) != applied3d) {
             applied3d = p.getBoolean("buildings3d", false)
             m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
-        } else m.style?.getLayer("poi-l")?.setProperties(
+        } else for (lid in listOf("poi-l", "poi-major")) m.style?.getLayer(lid)?.setProperties(
             PropertyFactory.visibility(if (p.getBoolean("showPois", true)) Property.VISIBLE else Property.NONE))
         applyMode()
     }

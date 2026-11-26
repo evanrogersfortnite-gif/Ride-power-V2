@@ -174,10 +174,15 @@ object Router {
     }
 
     /** Named shops/food/amenities inside a bounding box (OpenStreetMap via Overpass). */
-    fun fetchPois(s: Double, w: Double, n: Double, e: Double): List<Poi> {
+    fun fetchPois(s: Double, w: Double, n: Double, e: Double, major: Boolean = false): List<Poi> {
         return try {
             val bb = "$s,$w,$n,$e"
-            val q = "[out:json][timeout:12];(" +
+            // zoomed out: only the places Google also shows from afar (supermarkets, big stores, charging, hospitals…)
+            val q = if (major) "[out:json][timeout:15];(" +
+                    "nwr[\"name\"][\"shop\"~\"^(supermarket|convenience|department_store|mall|bicycle|chemist|hardware|doityourself)$\"]($bb);" +
+                    "nwr[\"name\"][\"amenity\"~\"^(fuel|charging_station|hospital|cinema|marketplace|pharmacy)$\"]($bb);" +
+                    ");out center 350;"
+            else "[out:json][timeout:12];(" +
                     "nwr[\"name\"][\"shop\"]($bb);" +
                     "nwr[\"name\"][\"amenity\"~\"^(restaurant|fast_food|cafe|pub|bar|ice_cream|pharmacy|hospital|doctors|dentist|" +
                     "fuel|charging_station|bank|atm|post_office|bicycle_rental|library|cinema|theatre|marketplace)$\"]($bb);" +
