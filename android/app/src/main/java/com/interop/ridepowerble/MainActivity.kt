@@ -175,6 +175,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private lateinit var battFill: View
     private lateinit var tvRange: TextView
     private lateinit var tvVolts: TextView
+    private lateinit var wattCard: TextView
     private lateinit var tvSpeed: TextView
     private lateinit var tvLimit: TextView
     private lateinit var sheet: LinearLayout
@@ -638,41 +639,54 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun buildSpeed(frame: FrameLayout) {
+        // speed and battery: two equal square blocks, bottom-left
         speedCard = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(13), dp(6), dp(11), dp(6))
-            background = shape(Color.WHITE, dp(16)); elevation = dp(4).toFloat()
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat()
         }
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
-        tvSpeed = TextView(this).apply { text = "0"; textSize = 28f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
-        col.addView(tvSpeed)
-        col.addView(TextView(this).apply { text = "mph"; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER })
-        speedCard.addView(col)
+        tvSpeed = TextView(this).apply { text = "0"; textSize = 30f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        speedCard.addView(tvSpeed)
+        speedCard.addView(TextView(this).apply { text = "mph"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER })
+        // road speed-limit sign sits on the block's top-right corner (like Google)
         tvLimit = TextView(this).apply {
-            textSize = 14f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+            textSize = 13f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(3), RED) }
-            visibility = View.GONE
+            elevation = dp(6).toFloat(); visibility = View.GONE
+            translationX = dp(10).toFloat(); translationY = -dp(10).toFloat()
         }
-        speedCard.addView(tvLimit, LinearLayout.LayoutParams(dp(40), dp(40)).apply { leftMargin = dp(10) })
-        // battery block, floating next to the speed
+        val speedBox = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        speedBox.addView(speedCard, FrameLayout.LayoutParams(dp(HUD), dp(HUD)))
+        speedBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.END })
+
         battCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(11), dp(6), dp(11), dp(6))
-            background = shape(Color.WHITE, dp(16)); elevation = dp(4).toFloat()
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat()
             setOnClickListener { showBatteryDetails() }
         }
-        tvBatt = TextView(this).apply { text = "–%"; textSize = 20f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        tvBatt = TextView(this).apply { text = "–%"; textSize = 22f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
         battCard.addView(tvBatt)
+        // live battery voltage right under the %
+        tvVolts = TextView(this).apply { text = "– V"; textSize = 12f; setTextColor(INK); gravity = Gravity.CENTER }
+        battCard.addView(tvVolts)
         val track = FrameLayout(this).apply { background = shape(0xFFE8EAED.toInt(), dp(3)) }
         battFill = View(this).apply { background = shape(MUTED, dp(3)) }
         track.addView(battFill, FrameLayout.LayoutParams(0, MATCH))
-        battCard.addView(track, LinearLayout.LayoutParams(dp(BAR_W), dp(5)).apply { topMargin = dp(2); bottomMargin = dp(3) })
+        battCard.addView(track, LinearLayout.LayoutParams(dp(BAR_W), dp(5)).apply { topMargin = dp(3); bottomMargin = dp(3) })
         tvRange = TextView(this).apply { text = "– mi"; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER }
         battCard.addView(tvRange)
-        tvVolts = TextView(this).apply { text = ""; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER; visibility = View.GONE }
-        battCard.addView(tvVolts)
-        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, 0, dp(8), dp(8)) }
-        hudRow.addView(speedCard)
-        hudRow.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
+
+        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(12), dp(12), dp(8)) }
+        hudRow.addView(speedBox)
+        hudRow.addView(battCard, LinearLayout.LayoutParams(dp(HUD), dp(HUD)).apply { leftMargin = dp(12) })
+
+        // live power block, top-left (under the search bar / turn banner)
+        wattCard = TextView(this).apply {
+            text = "– W"; textSize = 18f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_VERTICAL
+            setCompoundDrawablesRelative(AppIcons.drawable(this@MainActivity, "bolt", 0xFFF57C00.toInt(), 22), null, null, null)
+            compoundDrawablePadding = dp(4); setPadding(dp(10), dp(8), dp(14), dp(8))
+            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat(); visibility = View.GONE
+        }
+        frame.addView(wattCard, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(14) })
         // bike status chips (cruise / reverse / brake / anti-theft / cruise countdown) above the cards
         hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         hud.addView(hudRow)
@@ -688,7 +702,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             if (lp.bottomMargin != want && bottom > top) { lp.bottomMargin = want; statusRow.layoutParams = lp }
         }
     }
-    private val BAR_W = 54
+    private val BAR_W = 58
+    private val HUD = 96          // speed & battery blocks: same size
 
     private fun buildSheet(frame: FrameLayout) {
         sheet = LinearLayout(this).apply {
@@ -782,6 +797,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(sheet, mode == Mode.PLACE || mode == Mode.ROUTES || mode == Mode.ARRIVED)
         vis(hud, mode == Mode.BROWSE || mode == Mode.NAV)
         if (hud.visibility != View.VISIBLE) statusRow.visibility = View.GONE
+        hud.post { positionWattCard() }
         vis(myLocBtn, mode == Mode.BROWSE)
         vis(gearBtn, mode == Mode.BROWSE)
         vis(trafficBtn, mode != Mode.ARRIVED)
@@ -800,6 +816,17 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         tuneGps()
         if (mode == Mode.NAV || prefs().getBoolean("keepOn", false)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    /** Live power block sits just under whatever is at the top (search bar or turn banner). */
+    private fun positionWattCard() {
+        val show = BleManager.connected && (mode == Mode.BROWSE || mode == Mode.NAV)
+        wattCard.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) return
+        val anchor: View = if (mode == Mode.NAV) turnBanner else topBox
+        val want = anchor.bottom + dp(10)
+        val lp = wattCard.layoutParams as FrameLayout.LayoutParams
+        if (anchor.bottom > 0 && lp.topMargin != want) { lp.topMargin = want; wattCard.layoutParams = lp }
     }
 
     private fun closeAll() {
@@ -1692,9 +1719,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph)
         if (d.batteryV > 5) {
+            tvVolts.text = "%.1f V".format(d.batteryV)
             val w = estimator.watts
-            tvVolts.text = "%.1f V".format(d.batteryV) + if (w >= 30) " · ${(w / 10).roundToInt() * 10} W" else ""
-            tvVolts.visibility = View.VISIBLE
+            wattCard.text = if (w >= 10) "${(w / 10).roundToInt() * 10} W" else "0 W"
+            positionWattCard()
         }
         showBikeStatus(d)
         lastVolts = d.batteryV
@@ -1763,7 +1791,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
         if (!backgrounded) tuneGps()
         if (!connected) { statusRow.removeAllViews(); shownChips = emptyList(); statusRow.visibility = View.GONE }
-        if (!connected) tvVolts.visibility = View.GONE
+        if (!connected) { tvVolts.text = "– V"; wattCard.visibility = View.GONE }
         if (!connected) showBatt(lastPct, false)
     }
 
