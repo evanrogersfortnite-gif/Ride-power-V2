@@ -240,7 +240,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             .setMessage("Free from my.tomtom.com (TomTom closed the old developer site). Sign up, find your API key, copy it here.")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
-                val k = input.text.toString().trim()
+                val k = Router.cleanApiKey(input.text.toString())
                 prefs().edit().putString("tomtom_key", k).apply { if (k.isEmpty()) putBoolean("traffic", false) }.apply(); build()
             }
             .setNeutralButton("Remove") { _, _ -> prefs().edit().remove("tomtom_key").putBoolean("traffic", false).apply(); build() }

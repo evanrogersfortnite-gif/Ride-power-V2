@@ -1738,7 +1738,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             .setNeutralButton("Open my.tomtom.com") { _, _ ->
                 startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://my.tomtom.com/"))) }
             .setPositiveButton("Save") { _, _ ->
-                val k = input.text.toString().trim()
+                val k = Router.cleanApiKey(input.text.toString())
                 if (k.isNotEmpty()) { prefs().edit().putString("tomtom_key", k).apply(); toggleTraffic() }
             }
             .setNegativeButton("Cancel", null).show()

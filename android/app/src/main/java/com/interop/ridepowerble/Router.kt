@@ -433,6 +433,16 @@ object Router {
         }
     }
 
+    /**
+     * Accepts a TomTom key pasted on its own or inside a whole example link
+     * ("...&key=XXXX") and returns just the key.
+     */
+    fun cleanApiKey(raw: String): String {
+        val t = raw.trim()
+        Regex("[?&]key=([A-Za-z0-9_-]+)").find(t)?.let { return it.groupValues[1] }
+        return t.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+    }
+
     /** Overpass with fallback mirrors (the main server is often busy / rate-limited). */
     private val OVERPASS = listOf("https://overpass-api.de/api/interpreter",
         "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter")
