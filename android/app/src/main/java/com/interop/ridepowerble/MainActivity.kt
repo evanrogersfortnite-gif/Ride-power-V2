@@ -290,6 +290,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st.addLayer(CircleLayer("dest-l", "dest").withProperties(
             PropertyFactory.circleRadius(9f), PropertyFactory.circleColor("#EA4335"),
             PropertyFactory.circleStrokeColor("#FFFFFF"), PropertyFactory.circleStrokeWidth(3.5f)))
+        // Google-style faint blue cone showing which way the phone is facing
+        st.addImage("me-beam-img", makeBeam())
+        st.addLayer(SymbolLayer("me-beam", "me").withProperties(
+            PropertyFactory.iconImage("me-beam-img"), PropertyFactory.iconRotate(headingDeg),
+            PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+            PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
+            PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM), PropertyFactory.iconSize(0.9f),
+            PropertyFactory.visibility(Property.NONE)))
         st.addLayer(CircleLayer("me-halo", "me").withProperties(
             PropertyFactory.circleRadius(22f), PropertyFactory.circleColor("#1A73E8"), PropertyFactory.circleOpacity(0.16f)))
         st.addLayer(CircleLayer("me-dot", "me").withProperties(
@@ -309,7 +318,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(1.2f, 0f)),
             PropertyFactory.textMaxWidth(9f), PropertyFactory.textOptional(true),
             PropertyFactory.symbolSortKey(Expression.get("rank")),
-            PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE)).also { it.setMinZoom(15.5f) }, "route-alt-casing")
+            PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE)).also { it.setMinZoom(14f) }, "route-alt-casing")
         if (trafficOn) addTrafficLayer(st)
         redrawRoutes()
         lastLoc?.let { srcMe?.setGeoJson(pointJson(it.latitude, it.longitude)) }
@@ -354,15 +363,20 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                             else -> z(13f to 1.6f, 14f to 3f, 15f to 6f, 17f to 14.5f, 19f to 34f)
                         }
                         l.setProperties(PropertyFactory.lineWidth(c))
-                        if (!dark) l.setProperties(PropertyFactory.lineColor("#D3D6DB"))
+                        if (!dark) l.setProperties(PropertyFactory.lineColor(
+                            if (id.contains("motorway") || id.contains("trunk") || id.contains("primary")) "#8FA4BF" else "#CBD0D7"))
                     } else {
                         l.setProperties(PropertyFactory.lineWidth(w))
                         if (!dark && (id.contains("minor") || id.contains("street") || id.contains("service")
                                     || id.contains("secondary") || id.contains("tertiary")))
                             l.setProperties(PropertyFactory.lineColor("#FFFFFF"))
+                        // main roads: Google's blue-grey instead of yellow/orange
+                        if (!dark && (id.contains("trunk") || id.contains("primary")) && !id.contains("motorway"))
+                            l.setProperties(PropertyFactory.lineColor("#AEC1D9"))
                     }
                 }
                 is FillExtrusionLayer -> if (l.sourceLayer == "building") {
+                    l.setMinZoom(15.5f)       // like Google: no building clutter until you're zoomed in
                     // Google-like: pale, slightly see-through, and lower so streets stay visible when tilted
                     fun scaled(key: String) = Expression.product(Expression.literal(0.6f),
                         Expression.coalesce(Expression.toNumber(Expression.get(key)), Expression.literal(0f)))
@@ -379,8 +393,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                             Expression.stop(14.5f, 0f), Expression.stop(16f, scaled("render_min_height")))))
                 }
                 is FillLayer -> when {
-                    l.sourceLayer == "building" ->
-                        l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#ECEDF0"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DEE0E4"))
+                    l.sourceLayer == "building" -> {
+                        l.setMinZoom(15.5f)
+                        l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#ECEDF0"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DEE0E4")) }
                     dark -> {}
                     l.sourceLayer == "water" -> l.setProperties(PropertyFactory.fillColor("#9CC0F9"))
                     l.sourceLayer == "park" -> l.setProperties(PropertyFactory.fillColor("#C8EFD4"), PropertyFactory.fillOpacity(1f))
@@ -389,16 +404,82 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                             || id.contains("cemetery") || id.contains("pitch") || id.contains("meadow")) ->
                         l.setProperties(PropertyFactory.fillColor(if (id.contains("wood") || id.contains("forest")) "#BDE5C8" else "#D3F1DC"))
                 }
-                is SymbolLayer -> if (l.sourceLayer == "transportation_name") {
-                    // street names only: road-number shields have their own fixed-size box, leave them alone
-                    if (!l.iconImage.isNull || id.contains("shield") || id.contains("ref")) continue
-                    l.setProperties(PropertyFactory.textSize(z(13f to 11f, 16f to 13f, 18f to 15f)),
-                        PropertyFactory.textHaloWidth(1.6f))
+                is SymbolLayer -> {
+                    if (id == "poi-l" || id == "me-arrow" || id == "me-beam") continue
+                    // the map's italic font renders badly on some phones (garbled names) — use the clean regular one
+                    val bold = try { (l.textFont.value as? Array<*>)?.any { it.toString().contains("Bold") } == true } catch (_: Exception) { false }
+                    l.setProperties(PropertyFactory.textFont(arrayOf(if (bold) "Noto Sans Bold" else "Noto Sans Regular")))
+                    when {
+                        l.sourceLayer == "transportation_name" -> {
+                            // street names only: road-number shields have their own fixed-size box, leave them alone
+                            if (!l.iconImage.isNull || id.contains("shield") || id.contains("ref")) continue
+                            l.setProperties(PropertyFactory.textSize(z(13f to 11f, 16f to 13f, 18f to 15f)),
+                                PropertyFactory.textHaloWidth(1.6f), PropertyFactory.textColor(if (dark) "#C8CDD3" else "#5F6368"))
+                        }
+                        // suburbs / neighbourhoods: Google-style grey CAPITALS with spacing
+                        l.sourceLayer == "place" && !id.contains("city") && !id.contains("town") && !id.contains("country")
+                                && !id.contains("state") && !id.contains("continent") ->
+                            l.setProperties(PropertyFactory.textTransform(Property.TEXT_TRANSFORM_UPPERCASE),
+                                PropertyFactory.textLetterSpacing(0.12f), PropertyFactory.textSize(z(11f to 11f, 14f to 13f, 16f to 15f)),
+                                PropertyFactory.textColor(if (dark) "#AEB4BB" else "#5F6368"),
+                                PropertyFactory.textHaloColor(if (dark) "#1F1F1F" else "#FFFFFF"), PropertyFactory.textHaloWidth(1.5f))
+                        // bus stops & transit: only when zoomed right in (Google hides them further out)
+                        l.sourceLayer == "poi" && (id.contains("transit") || id.contains("bus") || id.contains("rail")) ->
+                            l.setMinZoom(16.5f)
+                    }
                 }
             }
         }
         // softer, Google-like land colour on the standard style
-        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F5F5F5"))
+        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F1F3F4"))
+    }
+
+    /** Faint blue wedge fading outward, pointing up (rotated to the phone's heading). */
+    private fun makeBeam(): Bitmap {
+        val w = 160; val h = 150
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = android.graphics.RadialGradient(w / 2f, h.toFloat(), h.toFloat(),
+            intArrayOf(0x701A73E8, 0x401A73E8, 0x001A73E8), floatArrayOf(0f, 0.55f, 1f), android.graphics.Shader.TileMode.CLAMP)
+        val path = Path().apply { moveTo(w / 2f, h.toFloat()); lineTo(0f, 0f); lineTo(w.toFloat(), 0f); close() }
+        c.drawPath(path, p)
+        return bmp
+    }
+
+    // ---- phone heading (for the direction cone) ----
+    private var headingDeg = 0f
+    private var headingShownAt = 0L
+    private var haveHeading = false
+    private val headingListener = object : android.hardware.SensorEventListener {
+        private val rot = FloatArray(9); private val ori = FloatArray(3)
+        override fun onSensorChanged(e: android.hardware.SensorEvent) {
+            android.hardware.SensorManager.getRotationMatrixFromVector(rot, e.values)
+            android.hardware.SensorManager.getOrientation(rot, ori)
+            val az = ((Math.toDegrees(ori[0].toDouble()) + 360) % 360).toFloat()
+            // smooth (handles the 359→0 wrap) and redraw at most ~8 times a second
+            val diff = ((az - headingDeg + 540) % 360) - 180
+            headingDeg = (headingDeg + diff * 0.25f + 360) % 360
+            haveHeading = true
+            val now = System.currentTimeMillis()
+            if (now - headingShownAt > 120 && abs(diff) > 1.5f) { headingShownAt = now; showHeading() }
+        }
+        override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+    }
+    private fun startHeading() {
+        val sm = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+        sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)?.let {
+            sm.registerListener(headingListener, it, android.hardware.SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+    private fun stopHeading() {
+        try { (getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager).unregisterListener(headingListener) } catch (_: Exception) {}
+    }
+    private fun showHeading() {
+        val st = map?.style ?: return
+        val on = haveHeading && mode != Mode.NAV && lastLoc != null
+        st.getLayer("me-beam")?.setProperties(PropertyFactory.iconRotate(headingDeg),
+            PropertyFactory.visibility(if (on) Property.VISIBLE else Property.NONE))
     }
 
     /** Google-style navigation chevron. */
@@ -421,6 +502,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st.getLayer("me-dot")?.setProperties(PropertyFactory.visibility(if (on) Property.NONE else Property.VISIBLE))
         st.getLayer("me-halo")?.setProperties(PropertyFactory.visibility(if (on) Property.NONE else Property.VISIBLE))
         st.getLayer("me-arrow")?.setProperties(PropertyFactory.visibility(if (on) Property.VISIBLE else Property.NONE))
+        if (on) st.getLayer("me-beam")?.setProperties(PropertyFactory.visibility(Property.NONE)) else showHeading()
         fun zw(vararg s: Pair<Float, Float>) = Expression.interpolate(Expression.linear(), Expression.zoom(), *s.map { Expression.stop(it.first, it.second) }.toTypedArray())
         st.getLayer("route-sel-casing")?.setProperties(PropertyFactory.lineWidth(
             if (on) zw(14f to 10f, 16f to 15f, 18f to 22f, 20f to 34f) else zw(12f to 6f, 15f to 9.5f, 17f to 14f, 19f to 24f)))
@@ -901,7 +983,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     // ============================ shops & places on the map ============================
     private fun loadPois() {
         val m = map ?: return
-        if (m.cameraPosition.zoom < 14.5) return
+        if (m.cameraPosition.zoom < 13.5) return
         val t = m.cameraPosition.target ?: return
         loadPoisAround(t.latitude, t.longitude)
     }
@@ -944,7 +1026,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     /** Nearest drawn place within a finger's width of the tap. */
     private fun poiAt(ll: LatLng): Router.Poi? {
         val m = map ?: return null
-        if (m.cameraPosition.zoom < 15.5 || !prefs().getBoolean("showPois", true)) return null
+        if (m.cameraPosition.zoom < 14 || !prefs().getBoolean("showPois", true)) return null
         val tap = m.projection.toScreenLocation(ll)
         var best: Router.Poi? = null; var bestD = dp(28).toFloat()
         for (p in pois) {
@@ -1824,6 +1906,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         super.onResume(); mapView.onResume(); BleManager.addListener(this); applySettings()
         BleManager.pollMs = 700
         if (backgrounded) { backgrounded = false; startLocation() }
+        startHeading()
     }
     private var backgrounded = false
 
@@ -1867,6 +1950,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
     override fun onPause() {
         super.onPause(); mapView.onPause(); BleManager.removeListener(this); estimator.save(); range.save(); rideLog.flush()
+        stopHeading()
         // in the background and not navigating: stop GPS and slow the bike polling to save phone battery
         if (mode != Mode.NAV && !isChangingConfigurations) {
             backgrounded = true
