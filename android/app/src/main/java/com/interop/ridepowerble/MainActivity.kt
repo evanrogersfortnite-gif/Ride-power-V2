@@ -282,10 +282,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         for ((g, v) in POI_STYLE) st.addImage("poi-$g", makePoiIcon(v.first, v.second))
         srcPoi = GeoJsonSource("pois").also { it.setGeoJson(poiJson(pois)); st.addSource(it) }
         val rnd = arrayOf(PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND))
-        st.addLayer(LineLayer("route-alt-casing", "route-alt").withProperties(PropertyFactory.lineColor("#8FA3BC"), PropertyFactory.lineWidth(10f), *rnd))
-        st.addLayer(LineLayer("route-alt-l", "route-alt").withProperties(PropertyFactory.lineColor("#BCCBDF"), PropertyFactory.lineWidth(7f), *rnd))
-        st.addLayer(LineLayer("route-sel-casing", "route-sel").withProperties(PropertyFactory.lineColor("#1A47C9"), PropertyFactory.lineWidth(11f), *rnd))
-        st.addLayer(LineLayer("route-sel-l", "route-sel").withProperties(PropertyFactory.lineColor("#4285F4"), PropertyFactory.lineWidth(7.5f), *rnd))
+        st.addLayer(LineLayer("route-alt-casing", "route-alt").withProperties(PropertyFactory.lineColor("#8FA3BC"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 5.5f), Expression.stop(15f, 8.5f), Expression.stop(17f, 12.5f), Expression.stop(19f, 21f))), *rnd))
+        st.addLayer(LineLayer("route-alt-l", "route-alt").withProperties(PropertyFactory.lineColor("#BCCBDF"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 3.5f), Expression.stop(15f, 6f), Expression.stop(17f, 9f), Expression.stop(19f, 16f))), *rnd))
+        st.addLayer(LineLayer("route-sel-casing", "route-sel").withProperties(PropertyFactory.lineColor("#1A47C9"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 6f), Expression.stop(15f, 9.5f), Expression.stop(17f, 14f), Expression.stop(19f, 24f))), *rnd))
+        st.addLayer(LineLayer("route-sel-l", "route-sel").withProperties(PropertyFactory.lineColor("#4285F4"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 4f), Expression.stop(15f, 6.5f), Expression.stop(17f, 10f), Expression.stop(19f, 18f))), *rnd))
         st.addLayer(CircleLayer("dest-l", "dest").withProperties(
             PropertyFactory.circleRadius(9f), PropertyFactory.circleColor("#EA4335"),
             PropertyFactory.circleStrokeColor("#FFFFFF"), PropertyFactory.circleStrokeWidth(3.5f)))
@@ -362,21 +362,38 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                     }
                 }
                 is FillExtrusionLayer -> if (l.sourceLayer == "building") {
+                    // Google-like: pale, slightly see-through, and lower so streets stay visible when tilted
+                    fun scaled(key: String) = Expression.product(Expression.literal(0.6f),
+                        Expression.coalesce(Expression.toNumber(Expression.get(key)), Expression.literal(0f)))
                     l.setProperties(
-                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else "#E1E3E7"),
-                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.9f else 0.92f))
+                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else "#EDEEF1"),
+                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.85f else 0.8f),
+                        PropertyFactory.fillExtrusionHeight(Expression.interpolate(Expression.linear(), Expression.zoom(),
+                            Expression.stop(14.5f, 0f), Expression.stop(16f, scaled("render_height")))),
+                        PropertyFactory.fillExtrusionBase(Expression.interpolate(Expression.linear(), Expression.zoom(),
+                            Expression.stop(14.5f, 0f), Expression.stop(16f, scaled("render_min_height")))))
                 }
-                is FillLayer -> if (l.sourceLayer == "building") {
-                    l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#E8E9EC"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DCDEE2"))
+                is FillLayer -> when {
+                    l.sourceLayer == "building" ->
+                        l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#ECEDF0"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DEE0E4"))
+                    dark -> {}
+                    l.sourceLayer == "water" -> l.setProperties(PropertyFactory.fillColor("#AAD3F5"))
+                    l.sourceLayer == "park" -> l.setProperties(PropertyFactory.fillColor("#CDEBD2"), PropertyFactory.fillOpacity(0.9f))
+                    (l.sourceLayer == "landcover" || l.sourceLayer == "landuse") &&
+                        (id.contains("wood") || id.contains("forest") || id.contains("grass") || id.contains("park")
+                            || id.contains("cemetery") || id.contains("pitch") || id.contains("meadow")) ->
+                        l.setProperties(PropertyFactory.fillColor(if (id.contains("wood") || id.contains("forest")) "#C3E4C8" else "#D6EFD8"))
                 }
                 is SymbolLayer -> if (l.sourceLayer == "transportation_name") {
-                    l.setProperties(PropertyFactory.textSize(z(13f to 11f, 16f to 13.5f, 18f to 16f)),
-                        PropertyFactory.textHaloWidth(1.8f))
+                    // street names only: road-number shields have their own fixed-size box, leave them alone
+                    if (!l.iconImage.isNull || id.contains("shield") || id.contains("ref")) continue
+                    l.setProperties(PropertyFactory.textSize(z(13f to 11f, 16f to 13f, 18f to 15f)),
+                        PropertyFactory.textHaloWidth(1.6f))
                 }
             }
         }
         // softer, Google-like land colour on the standard style
-        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F5F5F3"))
+        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F7F7F5"))
     }
 
     /** Google-style navigation chevron. */
