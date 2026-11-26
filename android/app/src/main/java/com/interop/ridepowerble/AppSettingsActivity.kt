@@ -50,7 +50,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         build()
     }
 
-    override fun onResume() { super.onResume(); BleManager.addListener(this); build() }
+    override fun onResume() { super.onResume(); BleManager.pollMs = 700; BleManager.addListener(this); build() }
     override fun onPause() { super.onPause(); BleManager.removeListener(this) }
     override fun onStatus(status: String, connected: Boolean) { runOnUiThread { bikeStatus?.text = statusLine() } }
 
@@ -206,17 +206,77 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
     }
 
     /** Match the app's voltage to the bike display / a meter. */
+    /**
+     * One-tap calibration against a known voltage: a fully charged pack sits at exactly
+     * cells × 4.2 V (58.8 V for 52 V / 14S), because the charger stops there. The app measures
+     * the resting voltage for ~5 s and scales its readings so that reads as full.
+     */
     private fun calibrateVolts() {
-        val rt = BleManager.lastRealtime
-        if (rt == null || !BleManager.connected) { toast("Connect the bike first"); return }
+        if (BleManager.lastRealtime == null || !BleManager.connected) { toast("Connect the bike first"); return }
+        val series = prefs().getInt("packSeries", 0).takeIf { it > 0 }
+            ?: BatteryEstimator(this).learnedSeries.takeIf { it > 0 } ?: 14
+        val full = series * 4.2
+        AlertDialog.Builder(this).setTitle("Calibrate voltage")
+            .setMessage("For an exact calibration:\n\n1. Charge the battery to full and unplug the charger\n" +
+                    "2. Keep the bike still, hands off the throttle\n3. Tap Calibrate\n\n" +
+                    "Amped measures for 5 seconds and sets itself so a full battery reads ${"%.1f".format(full)} V.")
+            .setPositiveButton("Calibrate") { _, _ -> measureAndCalibrate(full) }
+            .setNeutralButton("Other options") { _, _ -> calibrateMenu() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun measureAndCalibrate(full: Double) {
+        val label = TextView(this).apply { text = "Measuring… keep the bike still"; textSize = 16f; setPadding(dp(24), dp(20), dp(24), dp(8)) }
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(24), dp(12)); addView(label); addView(bar) }
+        val dlg = AlertDialog.Builder(this).setTitle("Calibrating").setView(box).setCancelable(false).show()
+        val samples = ArrayList<Double>()
+        var lastSeen: BleManager.Realtime? = null
+        var moved = false
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        val start = System.currentTimeMillis()
+        val tick = object : Runnable {
+            override fun run() {
+                val rt = BleManager.lastRealtime
+                if (rt != null && rt !== lastSeen) {
+                    lastSeen = rt
+                    val still = (rt.speedRpm == 0 || rt.speedRpm >= 20000) && rt.throttleV < 1.05
+                    if (!still) moved = true else samples += rt.batteryV / BleManager.voltCal   // raw (uncorrected) volts
+                }
+                val el = System.currentTimeMillis() - start
+                bar.progress = (el / 50).toInt().coerceAtMost(100)
+                if (el < 5000) { h.postDelayed(this, 200); return }
+                dlg.dismiss()
+                if (moved || samples.size < 4) { toast("The bike moved or the throttle was touched — try again with it still"); return }
+                val raw = samples.sorted()[samples.size / 2]
+                val f = full / raw
+                if (f < 0.94 || f > 1.06) {
+                    AlertDialog.Builder(this@AppSettingsActivity).setTitle("Not fully charged?")
+                        .setMessage("The battery reads ${"%.1f".format(raw * BleManager.voltCal)} V — too far from full (${"%.1f".format(full)} V) to be a fully charged pack. " +
+                                "Charge to full first, or use “Other options” to enter a meter reading.")
+                        .setPositiveButton("OK", null).show()
+                    return
+                }
+                BleManager.voltCal = f
+                prefs().edit().putFloat("voltCal", f.toFloat()).putBoolean("resetLearners", true).apply()
+                getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().remove("soc").apply()
+                toast("Calibrated: full battery now reads ${"%.1f".format(full)} V (×${"%.3f".format(f)})"); build()
+            }
+        }
+        h.post(tick)
+    }
+
+    /** Fallbacks: type in a meter/display reading, or reset. */
+    private fun calibrateMenu() {
+        val rt = BleManager.lastRealtime ?: return
         val raw = rt.batteryV / BleManager.voltCal
         val input = EditText(this).apply {
             hint = "e.g. 54.2"; setSingleLine(true)
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
-        AlertDialog.Builder(this).setTitle("Voltage calibration")
-            .setMessage("Amped reads ${"%.1f".format(rt.batteryV)} V right now.\n\nWith the bike standing still (no throttle), enter the voltage your bike's display or a meter shows:")
+        AlertDialog.Builder(this).setTitle("Enter a meter reading")
+            .setMessage("Amped reads ${"%.1f".format(rt.batteryV)} V now. With the bike still, enter what a multimeter shows:")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
                 val v = input.text.toString().replace(',', '.').toDoubleOrNull()
@@ -224,13 +284,12 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 val f = v / raw
                 if (f < 0.85 || f > 1.15) { toast("That's more than 15% off — check the number"); return@setPositiveButton }
                 BleManager.voltCal = f
-                prefs().edit().putFloat("voltCal", f.toFloat()).apply()
+                prefs().edit().putFloat("voltCal", f.toFloat()).putBoolean("resetLearners", true).apply()
                 getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().remove("soc").apply()
-                prefs().edit().putBoolean("resetLearners", true).apply()
                 toast("Calibrated"); build()
             }
-            .setNeutralButton("Reset") { _, _ ->
-                BleManager.voltCal = 1.0; prefs().edit().remove("voltCal").apply(); build() }
+            .setNeutralButton("Reset to default") { _, _ ->
+                BleManager.voltCal = 1.0; prefs().edit().remove("voltCal").apply(); toast("Calibration reset"); build() }
             .setNegativeButton("Cancel", null).show()
     }
 
