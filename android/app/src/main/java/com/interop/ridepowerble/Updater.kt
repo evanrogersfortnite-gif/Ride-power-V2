@@ -44,7 +44,7 @@ object Updater {
             val rel = try {
                 val conn = (URL(LATEST).openConnection() as HttpURLConnection).apply {
                     setRequestProperty("Accept", "application/vnd.github+json")
-                    setRequestProperty("User-Agent", "VoltRoute-updater")
+                    setRequestProperty("User-Agent", "Amped-updater")
                     connectTimeout = 8000; readTimeout = 10000
                 }
                 if (conn.responseCode != 200) { err = "Update server returned ${conn.responseCode}"; null }
@@ -70,7 +70,7 @@ object Updater {
     fun prompt(act: Activity, r: Release) {
         AlertDialog.Builder(act)
             .setTitle("Update available")
-            .setMessage("VoltRoute ${r.name} is ready (you have ${currentVersionName(act)}).\n\n" +
+            .setMessage("Amped ${r.name} is ready (you have ${currentVersionName(act)}).\n\n" +
                     "Size: ${"%.0f".format(r.sizeBytes / 1_048_576.0)} MB")
             .setPositiveButton("Update") { _, _ -> install(act, r) }
             .setNegativeButton("Later", null)
@@ -81,7 +81,7 @@ object Updater {
         if (!act.packageManager.canRequestPackageInstalls()) {
             AlertDialog.Builder(act)
                 .setTitle("Allow updates")
-                .setMessage("To update itself, VoltRoute needs permission to install apps.\n\n" +
+                .setMessage("To update itself, Amped needs permission to install apps.\n\n" +
                         "On the next screen turn on “Allow from this source”, then come back and tap Update again.")
                 .setPositiveButton("Open settings") { _, _ ->
                     act.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${act.packageName}")))
@@ -94,7 +94,7 @@ object Updater {
         val box = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL; setPadding(60, 30, 60, 10); addView(label); addView(bar)
         }
-        val dlg = AlertDialog.Builder(act).setTitle("Updating VoltRoute").setView(box).setCancelable(false).show()
+        val dlg = AlertDialog.Builder(act).setTitle("Updating Amped").setView(box).setCancelable(false).show()
         val ui = android.os.Handler(android.os.Looper.getMainLooper())
         exec.execute {
             try {
@@ -108,7 +108,7 @@ object Updater {
                     try {
                         val conn = (URL(r.apkUrl).openConnection() as HttpURLConnection).apply {
                             instanceFollowRedirects = true; connectTimeout = 10000; readTimeout = 20000
-                            setRequestProperty("User-Agent", "VoltRoute-updater")
+                            setRequestProperty("User-Agent", "Amped-updater")
                             if (have > 0) setRequestProperty("Range", "bytes=$have-")
                         }
                         val code = conn.responseCode
@@ -150,7 +150,7 @@ object Updater {
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
                 params.setAppPackageName(act.packageName)
                 params.setSize(file.length())
-                // Android 12+: once VoltRoute installed itself, later updates need no extra confirmation
+                // Android 12+: once Amped installed itself, later updates need no extra confirmation
                 if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
                 val sid = pi.createSession(params)
                 pi.openSession(sid).use { s ->

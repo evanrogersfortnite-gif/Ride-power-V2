@@ -137,7 +137,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             toggle("bell", "Speed limit alert", "Speaks when you go over the road's limit", "speedAlert", true)
             line()
             row("history", "Trip learning", tripSummary()) { confirm("Reset trip learning?",
-                "VoltRoute forgets how long your usual trips take and which routes you ride. ETAs go back to the default.") {
+                "Amped forgets how long your usual trips take and which routes you ride. ETAs go back to the default.") {
                 getSharedPreferences("trips", Context.MODE_PRIVATE).edit().clear().apply(); p.edit().putBoolean("resetLearners", true).apply(); build()
             } }
         }
@@ -164,9 +164,9 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 RideLogger.export(this@AppSettingsActivity)
             }
             line()
-            row("lock", "What VoltRoute stores", "Everything stays on this phone") {
+            row("lock", "What Amped stores", "Everything stays on this phone") {
                 AlertDialog.Builder(this).setTitle("Your data")
-                    .setMessage("VoltRoute has no account and no tracking. Searches, saved places, learned battery/ETA data and your TomTom key are stored only on this phone.\n\n" +
+                    .setMessage("Amped has no account and no tracking. Searches, saved places, learned battery/ETA data and your TomTom key are stored only on this phone.\n\n" +
                             "To show maps, search and routes, the app asks free public services (OpenFreeMap, OpenStreetMap/Photon/Nominatim/Overpass, BRouter, and TomTom if traffic is on) about the area you're looking at.")
                     .setPositiveButton("OK", null).show()
             }
@@ -175,7 +175,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         // ---------------- About ----------------
         section("About")
         card {
-            row("download", "Check for updates", "You have VoltRoute ${Updater.currentVersionName(this@AppSettingsActivity)}") {
+            row("download", "Check for updates", "You have Amped ${Updater.currentVersionName(this@AppSettingsActivity)}") {
                 toast("Checking…")
                 Updater.check(this@AppSettingsActivity) { r, err ->
                     if (r != null) Updater.prompt(this@AppSettingsActivity, r) else toast(err ?: "You're on the latest version")
@@ -198,7 +198,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
     }
 
     private fun confirmResetBattery() = confirm("Reset battery learning?",
-        "VoltRoute forgets your pack size and range per %, and learns them again over your next rides. Use this after changing battery.") {
+        "Amped forgets your pack size and range per %, and learns them again over your next rides. Use this after changing battery.") {
         getSharedPreferences("battery2", Context.MODE_PRIVATE).edit().clear().apply(); getSharedPreferences("battery", Context.MODE_PRIVATE).edit().clear().apply()
         getSharedPreferences("range", Context.MODE_PRIVATE).edit().clear().apply()
         prefs().edit().putBoolean("resetLearners", true).apply()
@@ -216,7 +216,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         }
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
         AlertDialog.Builder(this).setTitle("Voltage calibration")
-            .setMessage("VoltRoute reads ${"%.1f".format(rt.batteryV)} V right now.\n\nWith the bike standing still (no throttle), enter the voltage your bike's display or a meter shows:")
+            .setMessage("Amped reads ${"%.1f".format(rt.batteryV)} V right now.\n\nWith the bike standing still (no throttle), enter the voltage your bike's display or a meter shows:")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
                 val v = input.text.toString().replace(',', '.').toDoubleOrNull()

@@ -62,7 +62,7 @@ class RideLogger(ctx: Context) {
         fun rides(ctx: Context): List<File> =
             File(ctx.filesDir, "rides").listFiles()?.filter { it.length() > 200 }?.sortedByDescending { it.name } ?: emptyList()
 
-        /** Lets the rider pick a ride, saves it to Downloads/VoltRoute and opens the share sheet. */
+        /** Lets the rider pick a ride, saves it to Downloads/Amped and opens the share sheet. */
         fun export(act: Activity) {
             val list = rides(act)
             if (list.isEmpty()) { Toast.makeText(act, "No rides recorded yet", Toast.LENGTH_SHORT).show(); return }
@@ -81,9 +81,9 @@ class RideLogger(ctx: Context) {
                     Toast.makeText(act, "Exporting needs Android 10 or newer", Toast.LENGTH_LONG).show(); return
                 }
                 val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, "VoltRoute-" + f.name)
+                    put(MediaStore.Downloads.DISPLAY_NAME, "Amped-" + f.name)
                     put(MediaStore.Downloads.MIME_TYPE, "text/csv")
-                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/VoltRoute")
+                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/Amped")
                 }
                 val uri = act.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                     ?: throw Exception("couldn't create the file")
@@ -91,7 +91,7 @@ class RideLogger(ctx: Context) {
                 val share = Intent(Intent.ACTION_SEND).apply {
                     type = "text/csv"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                Toast.makeText(act, "Saved to Downloads/VoltRoute", Toast.LENGTH_SHORT).show()
+                Toast.makeText(act, "Saved to Downloads/Amped", Toast.LENGTH_SHORT).show()
                 act.startActivity(Intent.createChooser(share, "Share ride log"))
             } catch (e: Exception) {
                 Toast.makeText(act, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()

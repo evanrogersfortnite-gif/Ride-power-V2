@@ -140,7 +140,7 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
         }, lpw(ViewGroup.LayoutParams.MATCH_PARENT, 0f).apply { topMargin = dp(18) })
         val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "?" }
         body.addView(TextView(this).apply {
-            text = "VoltRoute $ver"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER
+            text = "Amped $ver"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER
             setPadding(0, dp(20), 0, 0)
         }, lpw(ViewGroup.LayoutParams.MATCH_PARENT, 0f))
 

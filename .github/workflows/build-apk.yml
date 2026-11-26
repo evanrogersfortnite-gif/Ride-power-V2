@@ -36,14 +36,14 @@ jobs:
 
       - name: Stage APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk "VoltRoute-1.0.${GITHUB_RUN_NUMBER}.apk"
-          ls -la VoltRoute-*.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk "Amped-1.0.${GITHUB_RUN_NUMBER}.apk"
+          ls -la Amped-*.apk
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VoltRoute-apk
-          path: VoltRoute-*.apk
+          name: Amped-apk
+          path: Amped-*.apk
 
       - name: Publish to Release
         env:
@@ -53,11 +53,11 @@ jobs:
           gh release delete apk-latest --cleanup-tag --yes || true
           VER="1.0.${GITHUB_RUN_NUMBER}"
           TAG="v${VER}"
-          NOTES="VoltRoute ${VER}. Download VoltRoute-${VER}.apk below and tap Update. Newest build is always at ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/latest"
+          NOTES="Amped ${VER}. Download Amped-${VER}.apk below and tap Update. Newest build is always at ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/latest"
           n=0
           until [ "$n" -ge 6 ]; do
-            if gh release create "$TAG" "VoltRoute-${VER}.apk" \
-                 --title "VoltRoute ${VER}" --notes "$NOTES"; then
+            if gh release create "$TAG" "Amped-${VER}.apk" \
+                 --title "Amped ${VER}" --notes "$NOTES"; then
               echo "Released $TAG"
               # keep the newest 3 releases (so an update already downloading isn't cut off)
               KEEP=$(gh release list --limit 200 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[0:3][] | .tagName')

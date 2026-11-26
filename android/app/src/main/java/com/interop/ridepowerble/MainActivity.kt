@@ -71,7 +71,7 @@ private val POI_STYLE = mapOf(
 private val POI_RANK = mapOf("shop" to 1, "food" to 2, "bike" to 2, "fuel" to 3, "health" to 3, "service" to 4, "place" to 5)
 
 /**
- * VoltRoute home screen — a Google-Maps-style e-bike navigator.
+ * Amped home screen — a Google-Maps-style e-bike navigator.
  *
  * Flow: BROWSE (map + search) → PLACE (place card + Directions) → ROUTES (route
  * preview + Start) → NAV (live turn-by-turn) → ARRIVED.
