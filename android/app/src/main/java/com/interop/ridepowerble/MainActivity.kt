@@ -688,6 +688,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val st = map?.style
         st?.getLayer("route-alt-l")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         st?.getLayer("route-alt-casing")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
+        st?.getLayer("traffic-top")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES || mode == Mode.NAV) Property.VISIBLE else Property.NONE))
         if (mode != Mode.ROUTES) { bubbleLayer.removeAllViews(); bubbles.clear() } else buildBubbles()
         tuneGps()
         if (mode == Mode.NAV || prefs().getBoolean("keepOn", false)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -1702,11 +1703,18 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val url = "https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${trafficKey()}&tileSize=256"
         st.addSource(RasterSource("traffic", TileSet("2.1.0", url), 256))
         st.addLayerBelow(RasterLayer("traffic-l", "traffic").withProperties(PropertyFactory.rasterOpacity(0.9f)), "route-alt-casing")
+        // slowdowns only (no green), drawn ON TOP of the route line so congestion shows on your route like Google
+        val delayUrl = "https://api.tomtom.com/traffic/map/4/tile/flow/relative-delay/{z}/{x}/{y}.png?key=${trafficKey()}&tileSize=256"
+        st.addSource(RasterSource("traffic-delay", TileSet("2.1.0", delayUrl), 256))
+        st.addLayerAbove(RasterLayer("traffic-top", "traffic-delay").withProperties(PropertyFactory.rasterOpacity(1f),
+            PropertyFactory.visibility(if (mode == Mode.ROUTES || mode == Mode.NAV) Property.VISIBLE else Property.NONE)), "route-sel-l")
     }
 
     private fun removeTrafficLayer(st: Style) {
         st.getLayer("traffic-l")?.let { st.removeLayer(it) }
         st.getSource("traffic")?.let { st.removeSource(it) }
+        st.getLayer("traffic-top")?.let { st.removeLayer(it) }
+        st.getSource("traffic-delay")?.let { st.removeSource(it) }
     }
 
     private fun toggleTraffic() {
