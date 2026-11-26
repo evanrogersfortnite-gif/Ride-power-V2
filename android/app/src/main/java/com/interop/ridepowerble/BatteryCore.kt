@@ -74,6 +74,8 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
     /** Learned correction between counted Ah and the voltage chart (1 = model exact). */
     val coulombScale get() = g("k", 1.0)
     val coulombSamples get() = g("kN", 0.0).toInt()
+    /** Number of full-throttle samples the resistance has been learned from (~1.4 per second of pull). */
+    val resistanceSamples get() = g("RN", 0.0).toInt()
     private fun g(k: String, d: Double) = st[k] ?: d
     private fun s(k: String, v: Double) { st[k] = v }
 
@@ -151,7 +153,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         // (only when we know this level's current limit)
         if (limitKnown && limitAmps > 5 && ocvRef > 0 && thrFrac > 0.9 && mph in 3.0..15.0 && speeds.size == 5 && mph - speeds.first() > 1.2) {
             val r = ((ocvRef - v) / limitAmps).coerceIn(0.02, 0.4)
-            s("R", resistance * 0.95 + r * 0.05)
+            s("R", resistance * 0.95 + r * 0.05); s("RN", g("RN", 0.0) + 1)
         }
         val dAh = amps * DT / 3600.0
         ahDisplay += dAh; ahRest += dAh

@@ -1664,12 +1664,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val v = if (lastVolts > 0) String.format(Locale.US, "%.1f V", lastVolts) else "–"
         AlertDialog.Builder(this).setTitle("Battery")
             .setMessage("Charge: $pct\nVoltage: $v\n" +
-                    "Range left: ~${if (lastPct >= 0) range.rangeMiles(lastPct).roundToInt() else 0} mi " +
+                    "Range left: ~${if (lastPct >= 0) range.rangeAt(lastPct, rangeMph()).roundToInt() else 0} mi at ${rangeMph().roundToInt()} mph " +
                     "(full charge ≈ ${range.fullRangeMiles().roundToInt()} mi, ${if (range.learned) "learned" else "estimate"})\n" +
                     "Ridden while connected: ${String.format(Locale.US, "%.1f", range.totalMiles)} mi\n" +
-                    "Bike: ${BleManager.status}\n\nLearned: ${estimator.summary()}\n\n" +
-                    "The % holds steady while you accelerate (voltage sag) and re-calibrates when you coast or stop. " +
-                    "Range learns from how far you actually ride per % of battery.")
+                    "Bike: ${BleManager.status}\n\n" + estimator.summary() + "\n" +
+                    "Route timing: ${learner.globalRides().let { if (it == 0) "learns from each navigation you finish" else "learned from $it ride${if (it == 1) "" else "s"}" }}\n\n" +
+                    "All of this learns automatically every ride and stays on your phone.")
             .setPositiveButton("OK", null)
             .setNeutralButton("Reconnect bike") { _, _ -> if (BleManager.isBluetoothOn()) BleManager.connect() else toast("Turn on Bluetooth first") }
             .show()

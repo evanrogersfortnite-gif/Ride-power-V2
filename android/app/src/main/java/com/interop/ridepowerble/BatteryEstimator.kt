@@ -82,15 +82,17 @@ class BatteryEstimator(ctx: Context) {
 
     fun save() { lastSaveMs = 0; maybeSave() }
 
-    /** Plain-English description of what it has learned. */
+    /** Plain-English description of what it has learned (shown when you tap the battery card). */
     fun summary(): String {
         val s = core.series
-        val pack = if (s > 0) "${s}S pack (full ${"%.1f".format(s * 4.2)} V, empty ${"%.1f".format(s * 3.0)} V)" else "pack size: learning…"
-        val sag = core.predictSag(1.0, 0.0)?.let { "learned from ${core.sagSamples} throttle releases (≈${"%.1f".format(it)} V at full throttle)" }
-            ?: "learning (${core.sagSamples}/5 throttle releases)"
-        val relax = if (core.relaxSamples > 0) "learned from ${core.relaxSamples} stops (${"%.0f".format(core.relaxRatio * 100)}% of sag)" else "typical value until you stop for a minute after riding"
-        val cc = "Pack resistance ${"%.3f".format(core.resistance)} Ω · counted-charge scale ×${"%.2f".format(core.coulombScale)}" +
-            (if (core.coulombSamples > 0) " (learned from ${core.coulombSamples} stops)" else " (learns at stops)")
-        return "$pack\nRecovery after letting go: $relax\nCurrent estimate: $cc"
+        val pack = if (s > 0) "${s}S pack: full ${"%.1f".format(s * 4.2)} V, empty ${"%.1f".format(s * 3.0)} V" else "Pack size: learning…"
+        val pulls = core.resistanceSamples / 4   // ~4 samples per pull
+        val res = if (pulls > 0) "${"%.3f".format(core.resistance)} Ω — learned from ~$pulls full-throttle pulls"
+                  else "not learned yet — needs full throttle from a slow start (3–15 mph)"
+        val stops = if (core.coulombSamples > 0) "×${"%.2f".format(core.coulombScale)} — checked at ${core.coulombSamples} stops"
+                    else "not checked yet — stop for ~20 s after riding a while"
+        val relax = if (core.relaxSamples > 0) "${"%.0f".format(core.relaxRatio * 100)}% of the dip — from ${core.relaxSamples} stops"
+                    else "typical value — learns when you stop for a minute after riding"
+        return "$pack\n\nBattery resistance: $res\nCharge-count correction: $stops\nVoltage recovery: $relax"
     }
 }
