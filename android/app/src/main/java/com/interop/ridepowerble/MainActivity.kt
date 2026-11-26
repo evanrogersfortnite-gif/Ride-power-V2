@@ -1436,6 +1436,62 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         speak("Starting route to ${d.title}. " + if (first.type == Maneuver.Type.ARRIVE) "Head straight to your destination."
               else "In ${spokenDist(first.along)}, ${NavRoute.text(first.type).lowercase()}.")
         lastLoc?.let { onNavFix(it) }
+        connectForTrip()
+    }
+
+    // ---- start of a journey: connect to the bike and check the battery ----
+    private var tripCheckPending = false
+    private var tripConnectTries = 0
+    private var firstLiveAt = 0L
+
+    private fun connectForTrip() {
+        tripCheckPending = true; firstLiveAt = 0L
+        if (BleManager.connected) return                     // check runs on the next live reading
+        if (!BleManager.isBluetoothOn()) {
+            AlertDialog.Builder(this).setTitle("Connect your bike?")
+                .setMessage("Bluetooth is off, so Amped can't read your battery for this trip.")
+                .setPositiveButton("Turn on Bluetooth") { _, _ ->
+                    try { startActivity(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) {}
+                    ui.postDelayed({ if (mode == Mode.NAV) { tripConnectTries = 0; tryTripConnect() } }, 4000)
+                }
+                .setNegativeButton("Not now") { _, _ -> tripCheckPending = false }.show()
+            return
+        }
+        tripConnectTries = 0
+        toast("Connecting to your bike…")
+        tryTripConnect()
+    }
+
+    /** The bike scan gives up after 15 s; try up to three times while navigating. */
+    private fun tryTripConnect() {
+        if (BleManager.connected || mode != Mode.NAV || !tripCheckPending) return
+        if (tripConnectTries >= 3) { toast("Couldn't find your bike — is it switched on?"); tripCheckPending = false; return }
+        tripConnectTries++
+        BleManager.connect()
+        ui.postDelayed({ tryTripConnect() }, 16000)
+    }
+
+    /** Called with live data: once the voltage has settled, say whether the battery covers the trip. */
+    private fun tripBatteryCheck(d: BleManager.Realtime, pct: Double) {
+        if (!tripCheckPending || mode != Mode.NAV) return
+        val now = System.currentTimeMillis()
+        if (firstLiveAt == 0L) { firstLiveAt = now; return }
+        if (now - firstLiveAt < 3000 || pct < 0) return          // give the reading a few seconds to settle
+        tripCheckPending = false
+        val nr = nav ?: return
+        val leftMi = max(0.0, nr.total - navAlong) / 1609.34
+        val milesPerPct = max(0.01, range.rangeAt(1.0, rangeMph()))
+        val need = leftMi / milesPerPct
+        val arrive = pct - need
+        val p = pct.roundToInt()
+        val volts = "%.1f".format(d.batteryV)
+        val msg = when {
+            arrive >= 10 -> "Bike connected. Battery $p percent, $volts volts. Plenty for this trip, you'll arrive with about ${arrive.roundToInt()} percent."
+            arrive >= 0 -> "Bike connected. Battery $p percent, $volts volts. Enough for this trip, but you'll arrive with only about ${max(0, arrive.roundToInt())} percent."
+            else -> "Warning: battery $p percent, $volts volts. This trip needs about ${need.roundToInt()} percent, so you may not make it without charging."
+        }
+        speak(msg, queue = true)          // after the route announcement, not over it
+        toast(msg.replace(" percent", "%").replace(" volts", " V"))
     }
 
     private fun stopNav() {
@@ -1601,9 +1657,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         addView(TextView(context).apply { text = label; textSize = 13f; setTextColor(MUTED) })
     }
 
-    private fun speak(text: String) {
+    private fun speak(text: String, queue: Boolean = false) {
         if (muted || !ttsReady) return
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voltroute")
+        tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "voltroute")
     }
 
     private fun spokenDist(m: Double): String {
@@ -1725,6 +1781,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             positionWattCard()
         }
         showBikeStatus(d)
+        tripBatteryCheck(d, pct)
         lastVolts = d.batteryV
         if (pct >= 0) {
             lastPct = pct; range.onSoc(pct)
