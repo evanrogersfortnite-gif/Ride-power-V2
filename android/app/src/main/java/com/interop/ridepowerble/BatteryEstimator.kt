@@ -67,11 +67,15 @@ class BatteryEstimator(ctx: Context) {
         return core.maxAmps * dcc / 100.0 * lvl / 100.0 to true
     }
     var lastLimitAmps = 0.0; private set
+    private var lastAt = 0L
 
     fun update(batteryV: Double, throttleV: Double, mph: Double, cruise: Boolean, brake: Boolean, gear: Int = 0): Double {
         val (lim, known) = limitFor(gear)
         lastLimitAmps = lim
-        val r = core.update(batteryV, throttleV, mph, cruise, brake, lim, known)
+        val now = System.nanoTime()
+        val dt = if (lastAt == 0L) BatteryCore.DT else (now - lastAt) / 1e9
+        lastAt = now
+        val r = core.update(batteryV, throttleV, mph, cruise, brake, lim, known, dt)
         maybeSave()
         return r
     }
@@ -95,7 +99,7 @@ class BatteryEstimator(ctx: Context) {
         val res = if (pulls > 0) "${"%.3f".format(core.resistance)} Ω — learned from ~$pulls full-throttle pulls"
                   else "not learned yet — needs a few full-throttle pulls of 4+ seconds"
         val stops = if (core.coulombSamples > 0) "×${"%.2f".format(core.coulombScale)} — checked at ${core.coulombSamples} stops"
-                    else "not checked yet — stop for ~20 s after riding a while"
+                    else "not checked yet — stop for ~10 s after riding a while"
         val relax = if (core.relaxSamples > 0) "${"%.0f".format(core.relaxRatio * 100)}% of the dip — from ${core.relaxSamples} stops"
                     else "typical value — learns when you stop for a minute after riding"
         return "$pack\n\nBattery resistance: $res\nCharge-count correction: $stops\nVoltage recovery: $relax"

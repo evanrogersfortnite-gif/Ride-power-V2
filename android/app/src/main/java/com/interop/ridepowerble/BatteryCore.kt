@@ -81,6 +81,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
 
     // ---- live state (not persisted) ----
     private var lastMph = 0.0
+    private var dt = DT                                // seconds since the previous sample (measured)
     private var fullThr = 0
     private var pullMaxSag = 0.0; private var pullLimit = 0.0; private var pullKnown = false
     private var onSamples = 0
@@ -129,7 +130,8 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
      * Cruise control powers the motor with the throttle at rest, so it counts as load.
      */
     fun update(v: Double, throttleV: Double, mph: Double, cruise: Boolean = false, brake: Boolean = false,
-               limitAmps: Double = maxAmps, limitKnown: Boolean = true): Double {
+               limitAmps: Double = maxAmps, limitKnown: Boolean = true, dtSec: Double = DT): Double {
+        dt = dtSec.coerceIn(0.1, 3.0)
         val rpm = mph
         if (v < 5.0) return soc
         var idle = g("thrIdle", -1.0)
@@ -146,7 +148,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         val holdingSpeed = speeds.size == 5 && mph > 8 && mph >= speeds.first() - 0.4
         val on = throttleV > idle + 0.15 || cruise || brake || holdingSpeed || mph - lastMph > 1.0
         lastMph = mph
-        sinceRelease += DT
+        sinceRelease += dt
 
         // ---- current estimate: sag below the resting voltage for the current %, divided by resistance ----
         val ocvRef = if (series > 0 && soc >= 0) cellFromPct(soc) * series else 0.0
@@ -167,7 +169,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
             }
             fullThr = 0; pullMaxSag = 0.0
         }
-        val dAh = amps * DT / 3600.0
+        val dAh = amps * dt / 3600.0
         ahDisplay += dAh; ahRest += dAh
         if (soc >= 0) {
             s("ahTotal", g("ahTotal", 0.0) + dAh)
@@ -210,7 +212,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
             if (relSag > 0.15 && relThr > 0.05) learnSag(relThr, relRpm, relSag)
         }
         // learn the slow relaxation: stopped ~60 s after a release
-        if (parkedSamples * DT >= 55 && relV3 > 0 && relSag > 0.5 && sinceRelease in 55.0..90.0) {
+        if (parkedSamples * dt >= 55 && relV3 > 0 && relSag > 0.5 && sinceRelease in 55.0..90.0) {
             val ratio = ((vm - relV3) / relSag).coerceIn(0.0, 0.6)
             val k = g("relaxN", 0.0).coerceAtMost(10.0) + 1.0          // running average (prior counts as one)
             s("relax", (relaxRatio * k + ratio) / (k + 1)); s("relaxN", g("relaxN", 0.0) + 1)
@@ -238,7 +240,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         hadGood = true
         socDisplayAnchor = soc; ahDisplay = 0.0
         // at a true rest, compare the voltage drop with the counted charge and refine the scale
-        if (parkedSamples >= 25) {
+        if (parkedSamples * dt >= 10.0 || parkedSamples >= 14) {     // stopped ~10 s (short stops count)
             if (socRestAnchor >= 0) {
                 val dropV = socRestAnchor - soc
                 val dropC = ahRest / capAh * 100.0
