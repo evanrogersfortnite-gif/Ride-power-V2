@@ -820,7 +820,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     /** Live power block sits just under whatever is at the top (search bar or turn banner). */
     private fun positionWattCard() {
-        val show = BleManager.connected && (mode == Mode.BROWSE || mode == Mode.NAV)
+        val show = mode == Mode.BROWSE || mode == Mode.NAV       // always there; "– W" until the bike sends data
         wattCard.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return
         val anchor: View = if (mode == Mode.NAV) turnBanner else topBox
@@ -1791,7 +1791,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
         if (!backgrounded) tuneGps()
         if (!connected) { statusRow.removeAllViews(); shownChips = emptyList(); statusRow.visibility = View.GONE }
-        if (!connected) { tvVolts.text = "– V"; wattCard.visibility = View.GONE }
+        if (!connected) { tvVolts.text = "– V"; wattCard.text = "– W" }
         if (!connected) showBatt(lastPct, false)
     }
 
