@@ -216,7 +216,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val frame = FrameLayout(this)
         mapView = MapView(this)
         mapView.onCreate(savedInstanceState)
-        mapView.setMaximumFps(30)          // smooth enough for a map, far less GPU/battery than 60-120 fps
         frame.addView(mapView, FrameLayout.LayoutParams(MATCH, MATCH))
         bubbleLayer = FrameLayout(this)
         frame.addView(bubbleLayer, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -683,7 +682,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st?.getLayer("route-alt-l")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         st?.getLayer("route-alt-casing")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         if (mode != Mode.ROUTES) { bubbleLayer.removeAllViews(); bubbles.clear() } else buildBubbles()
-        mapView.setMaximumFps(if (mode == Mode.NAV) 45 else 30)
         tuneGps()
         if (mode == Mode.NAV || prefs().getBoolean("keepOn", false)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -1753,6 +1751,13 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
     private var backgrounded = false
 
+    /** Map refresh rate from Settings: 0 = the screen's maximum (smoothest). */
+    private fun applyFps() {
+        val want = prefs().getInt("mapFps", 0)
+        val screen = (if (Build.VERSION.SDK_INT >= 30) display?.refreshRate else @Suppress("DEPRECATION") windowManager.defaultDisplay.refreshRate)?.roundToInt() ?: 60
+        mapView.setMaximumFps(if (want <= 0) maxOf(screen, 60) else want)
+    }
+
     /** Picks up anything changed on the Settings screen. */
     private fun applySettings() {
         val p = prefs()
@@ -1772,6 +1777,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             trafficBtn.background = shape(if (trafficOn) SOFTBLUE else Color.WHITE, dp(24))
             map?.getStyle { st -> if (trafficOn) addTrafficLayer(st) else removeTrafficLayer(st) }
         }
+        applyFps()
         val m = map ?: return
         if (appliedStyle.isNotEmpty() && styleUrl() != appliedStyle) {
             appliedStyle = styleUrl()

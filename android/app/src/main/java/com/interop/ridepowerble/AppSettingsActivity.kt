@@ -107,6 +107,10 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             choiceStr("🗺", "Map style", "mapStyle",
                 listOf("Standard" to "liberty", "Bright" to "bright", "Light" to "positron", "Dark" to "dark"), "liberty")
             line()
+            val hz = (if (android.os.Build.VERSION.SDK_INT >= 30) display?.refreshRate else @Suppress("DEPRECATION") windowManager.defaultDisplay.refreshRate)?.let { Math.round(it) } ?: 60
+            choice("🎞", "Map smoothness", "mapFps", listOf("Maximum — ${hz} Hz (smoothest)" to 0) +
+                listOf(120, 90, 60).filter { it < hz }.map { "$it Hz" to it } + listOf("30 Hz (saves battery)" to 30), 0)
+            line()
             toggle("🏪", "Shops & places on the map", "Names and icons when zoomed in", "showPois", true)
             line()
             toggle("🧭", "3D view while navigating", "Tilted map that looks ahead", "navTilt", true)
