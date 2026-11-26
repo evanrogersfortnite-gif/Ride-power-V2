@@ -167,6 +167,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private lateinit var gearBtn: TextView
     private lateinit var speedCard: LinearLayout
     private lateinit var hud: LinearLayout
+    private lateinit var statusRow: LinearLayout
+    private var wasCruise = false; private var wasReverse = false; private var lastFault = 0
+    private var steadyRef = 0.0; private var steadySecs = 0.0; private var cruiseTipShown = false
     private lateinit var battCard: LinearLayout
     private lateinit var battFill: View
     private lateinit var tvRange: TextView
@@ -545,9 +548,14 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         battCard.addView(tvRange)
         tvVolts = TextView(this).apply { text = ""; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER; visibility = View.GONE }
         battCard.addView(tvVolts)
-        hud = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
-        hud.addView(speedCard)
-        hud.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
+        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        hudRow.addView(speedCard)
+        hudRow.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
+        // bike status chips (cruise / reverse / brake / anti-theft / cruise countdown) above the cards
+        statusRow = LinearLayout(this).apply { visibility = View.GONE }
+        hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        hud.addView(statusRow, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = dp(8) })
+        hud.addView(hudRow)
         frame.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP).apply {
             gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(14), 0, 0, dp(22))
         })
@@ -1471,6 +1479,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong)
         if (d.batteryV > 5) { tvVolts.text = "%.1f V".format(d.batteryV); tvVolts.visibility = View.VISIBLE }
+        showBikeStatus(d)
         lastVolts = d.batteryV
         if (pct >= 0) {
             lastPct = pct; range.onSoc(pct)
@@ -1485,7 +1494,51 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
     }
 
+    /** Status chips, cruise countdown and fault alerts from the controller's live data. */
+    private fun showBikeStatus(d: BleManager.Realtime) {
+        // cruise countdown: how long the throttle has been held steady
+        if (d.throttleV > 1.3 && abs(d.throttleV - steadyRef) < 0.12) steadySecs += 0.7
+        else { steadyRef = d.throttleV; steadySecs = 0.0 }
+        val hold = prefs().getFloat("cruiseHold", 8f).toDouble()
+        if (d.cruise && !wasCruise) {
+            if (steadySecs in 2.0..25.0) prefs().edit().putFloat("cruiseHold", ((hold + steadySecs) / 2).toFloat()).apply()
+            speak("Cruise on"); cruiseTipShown = true
+        }
+        if (!d.cruise && wasCruise) speak("Cruise off")
+        if (d.reverse && !wasReverse) speak("Reverse")
+        if (!d.cruise && steadySecs > hold + 6 && !cruiseTipShown) {
+            cruiseTipShown = true
+            toast("Cruise didn't switch on — your controller may need cruise enabled (often a wire or button)")
+        }
+        wasCruise = d.cruise; wasReverse = d.reverse
+        // faults: announce each new one
+        val newBits = d.fault and lastFault.inv()
+        if (newBits != 0) {
+            val names = BleManager.FAULTS.filterIndexed { i, _ -> newBits and (1 shl i) != 0 }
+            val msg = "Bike warning: " + names.joinToString(", ")
+            speak(msg); toast(msg)
+        }
+        lastFault = d.fault
+
+        statusRow.removeAllViews()
+        fun chip(t: String, bg: Int) = statusRow.addView(TextView(this).apply {
+            text = t; textSize = 13f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD)
+            setPadding(dp(12), dp(6), dp(12), dp(6)); background = shape(bg, dp(14)); elevation = dp(4).toFloat()
+        }, LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(6) })
+        if (d.cruise) chip("⏵ CRUISE", 0xFF188038.toInt())
+        else if (steadySecs >= 1.4) {
+            val left = kotlin.math.ceil(hold - steadySecs).toInt()
+            if (left > 0) chip("Hold steady… cruise in ${left}s", BLUE)
+        }
+        if (d.reverse) chip("◀ REVERSE", 0xFFE37400.toInt())
+        if (d.brake) chip("BRAKE", RED)
+        if (d.antiTheft) chip("🔒 ANTI-THEFT", 0xFF5F6368.toInt())
+        if (d.fault != 0) chip("⚠ " + d.faults.first(), RED)
+        statusRow.visibility = if (statusRow.childCount > 0) View.VISIBLE else View.GONE
+    }
+
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
+        if (!connected) { statusRow.removeAllViews(); statusRow.visibility = View.GONE }
         if (!connected) tvVolts.visibility = View.GONE
         if (!connected) showBatt(lastPct, false)
     }

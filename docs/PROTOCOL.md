@@ -110,10 +110,26 @@ byte:  0     1    2     3    4     5    6     7       8        9     10    11   
 | `speed` | 5–6 | `(b5<<8)|b6` | **RPM** |
 | `hallState` | 7 | `b7 & 0x07` | low 3 bits = hall sensor state |
 | `learnStatus` | 7 | `(b7 >> 7) & 1` | 1 while self-learning active |
-| `workState` | 8 | `b8` | **gear** 0–5 (official app shows "N Gear") |
+| `workState` | 8 | `b8` | low nibble = **gear**, high bits = status flags (see below) |
 | `fault` | 9 | `b9` | fault/error code (0 = OK) |
 | `controllerTemperature` | 10 | `b10` | ℃ (raw byte) |
 | `motorTemperature` | 11 | `b11` | ℃ (raw byte) |
+
+**Work-state byte (b8)**, as decoded by the official app (`RealtimeData.getWorkStateText` / `_getGearText`):
+
+| Bits | Meaning |
+|------|---------|
+| 0–3 | gear level: 1–3 → 1, 4–6 → 2, 7–9 → 3, 10–12 → 4, 13–15 → 5, 0 → 0 |
+| 4 (`0x10`) | Reverse active |
+| 5 (`0x20`) | Anti-theft active |
+| 6 (`0x40`) | Cruise active |
+| 7 (`0x80`) | Brake applied |
+
+**Fault byte (b9)** bit flags (`RealtimeData.getFaultText`): bit0 under voltage, bit1 throttle error,
+bit2 phase loss, bit3 MOSFET error, bit4 over current, bit5 current-zero/over-temperature,
+bit6 motor stall, bit7 hall sensor error.
+
+There is no BLE command or parameter to switch reverse or cruise; the controller only reports them.
 
 Verified against the official app: it displayed **48.0 V** (⇒ raw 366 = `0x016E`),
 throttle **2.5 V** (⇒ raw 512), speed **600 RPM**, hall **5**, "1 Gear".

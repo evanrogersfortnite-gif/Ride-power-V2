@@ -26,8 +26,22 @@ object BleManager {
     data class Realtime(
         val batteryV: Double, val throttleV: Double, val speedRpm: Int,
         val hall: Int, val learning: Boolean, val gear: Int, val fault: Int,
-        val ctrlTemp: Int, val motorTemp: Int
-    )
+        val ctrlTemp: Int, val motorTemp: Int, val workState: Int = 0
+    ) {
+        // status flags share the work-state byte with the gear (as decoded by the official app)
+        val reverse get() = workState and 0x10 != 0
+        val antiTheft get() = workState and 0x20 != 0
+        val cruise get() = workState and 0x40 != 0
+        val brake get() = workState and 0x80 != 0
+        /** Fault names for each set bit of the fault byte (official app's decoding). */
+        val faults: List<String> get() = FAULTS.filterIndexed { i, _ -> fault and (1 shl i) != 0 }
+    }
+
+    val FAULTS = listOf("Under voltage", "Throttle error", "Motor phase lost", "Controller MOSFET error",
+        "Over current", "Current sensor or over temperature", "Motor stalled", "Hall sensor error")
+
+    /** Gear from the low 4 bits of the work-state byte (official app's thresholds). */
+    fun gearOf(ws: Int): Int = when (ws and 0x0F) { in 13..15 -> 5; in 10..12 -> 4; in 7..9 -> 3; in 4..6 -> 2; in 1..3 -> 1; else -> 0 }
 
     interface Listener {
         fun onStatus(status: String, connected: Boolean) {}
@@ -227,8 +241,8 @@ object BleManager {
                     speedRpm = u16(b, 5, 6),
                     hall = u(b, 7) and 0x07,
                     learning = ((u(b, 7) shr 7) and 1) == 1,
-                    gear = u(b, 8), fault = u(b, 9),
-                    ctrlTemp = u(b, 10), motorTemp = u(b, 11)
+                    gear = gearOf(u(b, 8)), fault = u(b, 9),
+                    ctrlTemp = u(b, 10), motorTemp = u(b, 11), workState = u(b, 8)
                 )
                 lastRealtime = d
                 handler.post { for (l in listeners) l.onRealtime(d) }
