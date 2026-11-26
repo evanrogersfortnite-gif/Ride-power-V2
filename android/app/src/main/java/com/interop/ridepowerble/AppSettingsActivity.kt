@@ -96,7 +96,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 "Learned full range ≈ ${"%.0f".format(rng.fullRangeMiles())} mi\n${est.summary()}") { confirmResetBattery() }
             line()
             choice("🏁", "Range estimate speed", "rangeMph",
-                listOf(10, 12, 15, 18, 20, 22, 25, 28).map { "$it mph average" to it }, 15)
+                listOf("Automatic (your average speed)" to 0) + listOf(10, 12, 15, 18, 20, 22, 25, 28).map { "$it mph average" to it }, 0)
             line()
             choice("⚠️", "Low battery warning", "lowBatt", listOf("Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "25%" to 25), 15)
         }

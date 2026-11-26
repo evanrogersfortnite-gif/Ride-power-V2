@@ -198,6 +198,9 @@ object BleManager {
         handler.postDelayed({ if (txBusy) { txBusy = false; pump() } }, 1500)
     }
 
+    /** Live-data poll interval: fast while the app is on screen / navigating, slow in the background. */
+    @Volatile var pollMs = 700L
+
     private fun startPolling() {
         if (polling) return
         polling = true
@@ -205,7 +208,7 @@ object BleManager {
             override fun run() {
                 if (!polling) return
                 if (connected) enqueue(queryFrame(CMD_REALTIME), "")
-                handler.postDelayed(this, 700)
+                handler.postDelayed(this, pollMs)
             }
         }
         handler.postDelayed(r, 300)

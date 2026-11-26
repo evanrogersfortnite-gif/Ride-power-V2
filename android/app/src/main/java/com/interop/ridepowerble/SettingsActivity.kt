@@ -145,7 +145,7 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
         setControlsEnabled(BleManager.connected)
     }
 
-    override fun onResume() { super.onResume(); BleManager.addListener(this) }
+    override fun onResume() { super.onResume(); BleManager.pollMs = 700; BleManager.addListener(this) }
     override fun onPause() { super.onPause(); BleManager.removeListener(this) }
 
     // ---- BleManager.Listener ----

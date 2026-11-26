@@ -216,6 +216,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val frame = FrameLayout(this)
         mapView = MapView(this)
         mapView.onCreate(savedInstanceState)
+        mapView.setMaximumFps(30)          // smooth enough for a map, far less GPU/battery than 60-120 fps
         frame.addView(mapView, FrameLayout.LayoutParams(MATCH, MATCH))
         bubbleLayer = FrameLayout(this)
         frame.addView(bubbleLayer, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -665,6 +666,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st?.getLayer("route-alt-l")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         st?.getLayer("route-alt-casing")?.setProperties(PropertyFactory.visibility(if (mode == Mode.ROUTES) Property.VISIBLE else Property.NONE))
         if (mode != Mode.ROUTES) { bubbleLayer.removeAllViews(); bubbles.clear() } else buildBubbles()
+        mapView.setMaximumFps(if (mode == Mode.NAV) 45 else 30)
+        tuneGps()
         if (mode == Mode.NAV || prefs().getBoolean("keepOn", false)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
@@ -1099,7 +1102,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         })
         sheet.addView(TextView(this).apply { text = "${hillLabel(r)}  ·  Arrive ${clock(eta(r))}"; textSize = 15f; setTextColor(MUTED) })
         if (lastPct >= 0) {
-            val need = range.pctNeeded(r.meters / 1609.34)
+            val need = (r.meters / 1609.34) / max(0.01, range.rangeAt(1.0, rangeMph()))   // at your average speed
             val left = lastPct - need
             sheet.addView(TextView(this).apply {
                 text = if (left < 8) "⚠ May not have enough battery (needs ~${need.roundToInt()}%, you have ${lastPct.roundToInt()}%)"
@@ -1307,7 +1310,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val remM = (nr.total - s.along) + if (onRoute) 0.0 else s.offRoute
         val remS = remM / max(1.0, nr.total) * eta(nr.route)
         tvEta.text = fmtDuration(max(1, (remS / 60).roundToInt()))
-        tvEtaSub.text = "${fmtMiles(remM)}  ·  ${clock(remS.roundToInt())}"
+        val arrivePct = if (lastPct >= 0) lastPct - (remM / 1609.34) / max(0.01, range.rangeAt(1.0, rangeMph())) else null
+        tvEtaSub.text = "${fmtMiles(remM)}  ·  ${clock(remS.roundToInt())}" +
+            (arrivePct?.let { "  ·  🔋 ${max(0, it.roundToInt())}% left" } ?: "")
+        tvEtaSub.setTextColor(if (arrivePct != null && arrivePct < 8) RED else MUTED)
 
         if ((m.type == Maneuver.Type.ARRIVE && dm < 25) || Geo.dist(loc.latitude, loc.longitude, d.lat, d.lon) < 25) { arrive(); return }
 
@@ -1438,7 +1444,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             haveFix = true
             if (mode == Mode.BROWSE) moveTo(ll, 16.5)
             if (mode == Mode.ROUTES && routes.isEmpty()) dest?.let { computeRoutes(it) }
-        } else if (follow && mode == Mode.BROWSE) moveTo(ll, null, 900)
+        } else if (follow && mode == Mode.BROWSE) {
+            val c = map?.cameraPosition?.target
+            if (c == null || Geo.dist(c.latitude, c.longitude, ll.latitude, ll.longitude) > 6) moveTo(ll, null, 900)
+        }
+        // average moving speed this ride (for range estimates)
+        if (loc.hasSpeed() && loc.speed > 1.5f && loc.accuracy < 30f) {
+            val now = System.currentTimeMillis()
+            if (lastMoveAt > 0 && now - lastMoveAt < 5000) { rideMovingSecs += (now - lastMoveAt) / 1000.0; rideMiles += loc.speed * (now - lastMoveAt) / 1000.0 / 1609.34 }
+            lastMoveAt = now
+        } else lastMoveAt = 0L
     }
     @Deprecated("Deprecated in Java") override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
     override fun onProviderEnabled(p: String) {}
@@ -1448,7 +1463,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         if (limitBusy) return
         val now = System.currentTimeMillis()
         val prev = limitQueryLoc
-        if (prev != null && (loc.distanceTo(prev) < 60f || now - limitQueryAt < 8000)) return
+        if (prev != null && (loc.distanceTo(prev) < 120f || now - limitQueryAt < 15000)) return
         limitBusy = true; limitQueryLoc = loc; limitQueryAt = now
         limitExec.execute {
             val v = Router.speedLimitMph(loc.latitude, loc.longitude)
@@ -1538,12 +1553,21 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
+        if (!backgrounded) tuneGps()
         if (!connected) { statusRow.removeAllViews(); statusRow.visibility = View.GONE }
         if (!connected) tvVolts.visibility = View.GONE
         if (!connected) showBatt(lastPct, false)
     }
 
-    private fun rangeMph() = prefs().getInt("rangeMph", 15)
+    private var rideMovingSecs = 0.0; private var rideMiles = 0.0; private var lastMoveAt = 0L
+
+    /** Average speed for range: your average this ride (after 2 min of riding), else your learned average, else 15. */
+    private fun autoMph(): Double = when {
+        rideMovingSecs > 120 -> rideMiles / (rideMovingSecs / 3600.0)
+        else -> range.learnedAvgMph ?: 15.0
+    }.coerceIn(6.0, 35.0)
+    private fun rangeAuto() = prefs().getInt("rangeMph", 0) == 0
+    private fun rangeMph(): Double = if (rangeAuto()) autoMph() else prefs().getInt("rangeMph", 15).toDouble()
 
     /** Battery block: big %, red→green live bar, and miles left at your chosen average speed. */
     private fun showBatt(pct: Double, live: Boolean) {
@@ -1559,8 +1583,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         battFill.background = shape(col, dp(3))
         (battFill.layoutParams as FrameLayout.LayoutParams).width = (dp(64) * p / 100.0).roundToInt().coerceAtLeast(dp(3))
         battFill.requestLayout()
-        val mi = range.rangeAt(p, rangeMph().toDouble())
-        tvRange.text = "≈${mi.roundToInt()} mi @${rangeMph()}"
+        val mi = range.rangeAt(p, rangeMph())
+        tvRange.text = "≈${mi.roundToInt()} mi @${rangeMph().roundToInt()}" + if (rangeAuto()) " avg" else ""
     }
 
     private fun showBatteryDetails() {
@@ -1689,15 +1713,28 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun startLocation() {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        // 1 s fixes while navigating or riding; slower and only on movement while just browsing
+        val fast = mode == Mode.NAV || BleManager.connected
         try {
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this)
-            lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 3000L, 0f, this)
+            lm.removeUpdates(this)
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, if (fast) 1000L else 2500L, if (fast) 0f else 4f, this)
+            if (!haveFix) lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 5000L, 10f, this)
         } catch (_: Exception) {}
+        gpsFast = fast
     }
+    private var gpsFast = false
+
+    /** Switch GPS rate when navigation starts/stops or the bike connects. */
+    private fun tuneGps() { if ((mode == Mode.NAV || BleManager.connected) != gpsFast) startLocation() }
 
     // ============================ lifecycle ============================
     override fun onStart() { super.onStart(); mapView.onStart() }
-    override fun onResume() { super.onResume(); mapView.onResume(); BleManager.addListener(this); applySettings() }
+    override fun onResume() {
+        super.onResume(); mapView.onResume(); BleManager.addListener(this); applySettings()
+        BleManager.pollMs = 700
+        if (backgrounded) { backgrounded = false; startLocation() }
+    }
+    private var backgrounded = false
 
     /** Picks up anything changed on the Settings screen. */
     private fun applySettings() {
@@ -1728,6 +1765,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
     override fun onPause() {
         super.onPause(); mapView.onPause(); BleManager.removeListener(this); estimator.save(); range.save(); rideLog.flush()
+        // in the background and not navigating: stop GPS and slow the bike polling to save phone battery
+        if (mode != Mode.NAV && !isChangingConfigurations) {
+            backgrounded = true
+            try { (getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(this) } catch (_: Exception) {}
+            BleManager.pollMs = 3000
+        }
         lastLoc?.let {
             getSharedPreferences("map", Context.MODE_PRIVATE).edit()
                 .putFloat("lat", it.latitude.toFloat()).putFloat("lon", it.longitude.toFloat()).apply()
