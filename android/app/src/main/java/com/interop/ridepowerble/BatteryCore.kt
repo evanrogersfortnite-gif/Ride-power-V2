@@ -124,7 +124,8 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
      * [mph] = motor/wheel speed from the controller (0 when stopped). [cruise]/[brake] = controller flags.
      * Cruise control powers the motor with the throttle at rest, so it counts as load.
      */
-    fun update(v: Double, throttleV: Double, mph: Double, cruise: Boolean = false, brake: Boolean = false): Double {
+    fun update(v: Double, throttleV: Double, mph: Double, cruise: Boolean = false, brake: Boolean = false,
+               limitAmps: Double = maxAmps, limitKnown: Boolean = true): Double {
         val rpm = mph
         if (v < 5.0) return soc
         var idle = g("thrIdle", -1.0)
@@ -145,10 +146,11 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
 
         // ---- current estimate: sag below the resting voltage for the current %, divided by resistance ----
         val ocvRef = if (series > 0 && soc >= 0) cellFromPct(soc) * series else 0.0
-        amps = if (ocvRef > 0 && (on || mph > 3)) ((ocvRef - v) / resistance).coerceIn(0.0, maxAmps) else 0.0
+        amps = if (ocvRef > 0 && (on || mph > 3)) ((ocvRef - v) / resistance).coerceIn(0.0, limitAmps) else 0.0
         // learn resistance: full throttle, accelerating from low speed = controller at its current limit
-        if (ocvRef > 0 && thrFrac > 0.9 && mph in 3.0..15.0 && speeds.size == 5 && mph - speeds.first() > 1.2) {
-            val r = ((ocvRef - v) / maxAmps).coerceIn(0.02, 0.4)
+        // (only when we know this level's current limit)
+        if (limitKnown && limitAmps > 5 && ocvRef > 0 && thrFrac > 0.9 && mph in 3.0..15.0 && speeds.size == 5 && mph - speeds.first() > 1.2) {
+            val r = ((ocvRef - v) / limitAmps).coerceIn(0.02, 0.4)
             s("R", resistance * 0.95 + r * 0.05)
         }
         val dAh = amps * DT / 3600.0

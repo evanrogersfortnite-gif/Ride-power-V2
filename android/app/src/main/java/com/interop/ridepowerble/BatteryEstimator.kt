@@ -50,8 +50,23 @@ class BatteryEstimator(ctx: Context) {
     /** Best estimate of the battery's resting voltage (what the % is based on). */
     val restingVolts get() = core.lastOcv
 
-    fun update(batteryV: Double, throttleV: Double, mph: Double, cruise: Boolean, brake: Boolean): Double {
-        val r = core.update(batteryV, throttleV, mph, cruise, brake)
+    /**
+     * Current limit for the level you're in: controller max × "DC current %" × that level's %,
+     * read from the controller's own settings (bytes 2 and 5–9 of the parameter frame).
+     */
+    private fun limitFor(gear: Int): Pair<Double, Boolean> {
+        val p = BleManager.lastParams
+        if (p == null || p.size < 20 || gear !in 1..5) return core.maxAmps to false
+        val dcc = (p[2].toInt() and 0xff).coerceIn(10, 100)
+        val lvl = (p[4 + gear].toInt() and 0xff).coerceIn(1, 100)
+        return core.maxAmps * dcc / 100.0 * lvl / 100.0 to true
+    }
+    var lastLimitAmps = 0.0; private set
+
+    fun update(batteryV: Double, throttleV: Double, mph: Double, cruise: Boolean, brake: Boolean, gear: Int = 0): Double {
+        val (lim, known) = limitFor(gear)
+        lastLimitAmps = lim
+        val r = core.update(batteryV, throttleV, mph, cruise, brake, lim, known)
         maybeSave()
         return r
     }

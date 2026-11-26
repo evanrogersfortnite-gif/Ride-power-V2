@@ -1551,7 +1551,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     // ============================ battery ============================
     override fun onRealtime(d: BleManager.Realtime) = runOnUiThread {
-        val pct = estimator.update(d.batteryV, d.throttleV, d.motorMph, d.cruise, d.brake)
+        val pct = estimator.update(d.batteryV, d.throttleV, d.motorMph, d.cruise, d.brake, d.gear)
         val l = lastLoc
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph)
