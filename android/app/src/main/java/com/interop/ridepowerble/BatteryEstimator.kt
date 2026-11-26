@@ -33,7 +33,10 @@ class BatteryEstimator(ctx: Context) {
             state["ver"] = 4.0; e.putFloat("ver", 4f).apply()
         }
         core = BatteryCore(state)
-        core.fixedSeries = ctx.getSharedPreferences("app", Context.MODE_PRIVATE).getInt("packSeries", 0)
+        val app = ctx.getSharedPreferences("app", Context.MODE_PRIVATE)
+        core.fixedSeries = app.getInt("packSeries", 0)
+        core.maxAmps = app.getInt("maxAmps", 45).toDouble()
+        app.getInt("packAh10", 0).takeIf { it > 0 }?.let { core.capAh = it / 10.0 }
     }
 
     /** Last known estimate (persisted), or -1 if never measured. */
@@ -41,6 +44,9 @@ class BatteryEstimator(ctx: Context) {
     val learnedSeries get() = core.series
     val fullVolts get() = if (core.series > 0) core.series * 4.2 else 0.0
     val holding get() = core.holding
+    /** Estimated battery current (A) and power (W) right now. */
+    val amps get() = core.amps
+    val watts get() = core.watts
     /** Best estimate of the battery's resting voltage (what the % is based on). */
     val restingVolts get() = core.lastOcv
 
@@ -68,6 +74,8 @@ class BatteryEstimator(ctx: Context) {
         val sag = core.predictSag(1.0, 0.0)?.let { "learned from ${core.sagSamples} throttle releases (≈${"%.1f".format(it)} V at full throttle)" }
             ?: "learning (${core.sagSamples}/5 throttle releases)"
         val relax = if (core.relaxSamples > 0) "learned from ${core.relaxSamples} stops (${"%.0f".format(core.relaxRatio * 100)}% of sag)" else "typical value until you stop for a minute after riding"
-        return "$pack\nVoltage sag: $sag\nRecovery after letting go: $relax"
+        val cc = "Pack resistance ${"%.3f".format(core.resistance)} Ω · counted-charge scale ×${"%.2f".format(core.coulombScale)}" +
+            (if (core.coulombSamples > 0) " (learned from ${core.coulombSamples} stops)" else " (learns at stops)")
+        return "$pack\nRecovery after letting go: $relax\nCurrent estimate: $cc"
     }
 }

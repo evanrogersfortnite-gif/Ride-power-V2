@@ -1555,7 +1555,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val l = lastLoc
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph)
-        if (d.batteryV > 5) { tvVolts.text = "%.1f V".format(d.batteryV); tvVolts.visibility = View.VISIBLE }
+        if (d.batteryV > 5) {
+            val w = estimator.watts
+            tvVolts.text = "%.1f V".format(d.batteryV) + if (w >= 30) " · ${(w / 10).roundToInt() * 10} W" else ""
+            tvVolts.visibility = View.VISIBLE
+        }
         showBikeStatus(d)
         lastVolts = d.batteryV
         if (pct >= 0) {

@@ -45,9 +45,35 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
             return 50.0
         }
         const val DT = 0.7   // seconds between controller samples
+        /** Inverse of the chart: per-cell resting voltage for a %. */
+        fun cellFromPct(p: Double): Double {
+            val c = CURVE; val q = p.coerceIn(0.0, 100.0)
+            for (i in 0 until c.size - 1) { val (hi, ph) = c[i]; val (lo, pl) = c[i + 1]
+                if (q <= ph && q >= pl) return lo + (q - pl) / (ph - pl) * (hi - lo) }
+            return c.last().first
+        }
     }
 
     var fixedSeries = 0
+    /** Controller current limit (A): full throttle from low speed pulls this much. */
+    var maxAmps = 45.0
+    /** Pack capacity (Ah) for coulomb counting; the learned scale [k] corrects any error in it. */
+    var capAh = 20.0
+
+    // ---- coulomb counting (current estimated from voltage sag ÷ learned pack resistance) ----
+    var amps = 0.0; private set                        // estimated battery current now
+    val watts get() = amps * lastV
+    private var lastV = 0.0
+    private var ahDisplay = 0.0                        // Ah since the shown % was last set from voltage
+    private var socDisplayAnchor = -1.0
+    private var ahRest = 0.0                           // Ah since the last true resting reading
+    private var socRestAnchor = -1.0
+    private val thr3 = ArrayDeque<Double>()
+    /** Pack internal resistance (Ω), learned from full-throttle pulls at the controller's current limit. */
+    val resistance get() = g("R", 0.09)
+    /** Learned correction between counted Ah and the voltage chart (1 = model exact). */
+    val coulombScale get() = g("k", 1.0)
+    val coulombSamples get() = g("kN", 0.0).toInt()
     private fun g(k: String, d: Double) = st[k] ?: d
     private fun s(k: String, v: Double) { st[k] = v }
 
@@ -110,11 +136,27 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         val thrFrac = ((throttleV - idle) / span).coerceIn(0.0, 1.0)
         // powered with the throttle at rest = cruise (flag), or speed held steady above 8 mph for ~3 s
         // (coasting always slows down); braking = regen pushes voltage up, so don't read it either
+        lastV = v
         speeds.addLast(mph); if (speeds.size > 5) speeds.removeFirst()
         val holdingSpeed = speeds.size == 5 && mph > 8 && mph >= speeds.first() - 0.4
         val on = throttleV > idle + 0.15 || cruise || brake || holdingSpeed || mph - lastMph > 1.0
         lastMph = mph
         sinceRelease += DT
+
+        // ---- current estimate: sag below the resting voltage for the current %, divided by resistance ----
+        val ocvRef = if (series > 0 && soc >= 0) cellFromPct(soc) * series else 0.0
+        amps = if (ocvRef > 0 && (on || mph > 3)) ((ocvRef - v) / resistance).coerceIn(0.0, maxAmps) else 0.0
+        // learn resistance: full throttle, accelerating from low speed = controller at its current limit
+        if (ocvRef > 0 && thrFrac > 0.9 && mph in 3.0..15.0 && speeds.size == 5 && mph - speeds.first() > 1.2) {
+            val r = ((ocvRef - v) / maxAmps).coerceIn(0.02, 0.4)
+            s("R", resistance * 0.95 + r * 0.05)
+        }
+        val dAh = amps * DT / 3600.0
+        ahDisplay += dAh; ahRest += dAh
+        if (soc >= 0) {
+            s("ahTotal", g("ahTotal", 0.0) + dAh)
+            s("whTotal", g("whTotal", 0.0) + dAh * v)
+        }
 
         if (on) {
             onSamples++; offSamples = 0; parkedSamples = 0; recent.clear()
@@ -122,11 +164,10 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
             relThr = thrFrac; relRpm = rpm
             holding = true
             // long stretch on the throttle: use the learned sag to keep the % honest (only ever downward)
-            val sag = predictSag(thrFrac, rpm)
-            if (sag != null && onSamples >= 4 && hadGood && series > 0) {
-                lastOcv = v + sag
-                val target = pctFromCell(lastOcv / series)
-                if (target < soc) s("soc", soc + (target - soc) * 0.01)
+            // on the throttle / cruising: count the charge used since the last good voltage reading
+            if (hadGood && socDisplayAnchor >= 0) {
+                val counted = socDisplayAnchor - coulombScale * ahDisplay / capAh * 100.0
+                if (counted < soc) s("soc", counted.coerceIn(0.0, 100.0))
             }
             return soc
         }
@@ -179,6 +220,20 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
             else -> cur + (target - cur) * 0.02                     // coasting, higher (regen): rise slowly
         }.coerceIn(0.0, 100.0))
         hadGood = true
+        socDisplayAnchor = soc; ahDisplay = 0.0
+        // at a true rest, compare the voltage drop with the counted charge and refine the scale
+        if (parkedSamples >= 25) {
+            if (socRestAnchor >= 0) {
+                val dropV = socRestAnchor - soc
+                val dropC = ahRest / capAh * 100.0
+                if (dropV > 3 && dropC > 1) {
+                    val ratio = (dropV / dropC).coerceIn(0.4, 2.5)
+                    val n = g("kN", 0.0).coerceAtMost(8.0) + 1
+                    s("k", (coulombScale * n + ratio) / (n + 1)); s("kN", g("kN", 0.0) + 1)
+                }
+            }
+            if (socRestAnchor < 0 || soc < socRestAnchor - 3 || soc > socRestAnchor + 5) { socRestAnchor = soc; ahRest = 0.0 }
+        }
         return soc
     }
 }

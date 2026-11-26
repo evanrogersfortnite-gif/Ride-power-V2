@@ -87,6 +87,9 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             row("🎯", "Voltage calibration", (if (rtV != null) "Reading ${"%.1f".format(rtV)} V" else "Connect the bike to calibrate") +
                     (if (BleManager.voltCal != 1.0) " · corrected ×${"%.3f".format(BleManager.voltCal)}" else "")) { calibrateVolts() }
             line()
+            choice("🔋", "Controller current limit", "maxAmps", listOf(20, 25, 30, 35, 40, 45, 50, 60, 70, 80).map { "$it A" to it }, 45) {
+                prefs().edit().putBoolean("resetLearners", true).apply() }
+            line()
             choice("⚡", "Battery capacity", "packAh10", listOf("Not set" to 0) +
                 listOf(10, 12, 13, 15, 17, 17.5, 20, 21, 24, 25, 28, 30, 35, 40, 50).map {
                     val n = it.toDouble(); (if (n % 1.0 == 0.0) "${n.toInt()} Ah" else "$n Ah") to (n * 10).toInt() }, 0) {
