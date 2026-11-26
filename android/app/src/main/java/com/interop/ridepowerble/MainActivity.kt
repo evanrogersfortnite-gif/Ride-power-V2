@@ -392,9 +392,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                     l.setProperties(
                         PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else if (threeD) "#EDEEF1" else "#E9EAED"),
                         PropertyFactory.fillExtrusionOpacity(if (dark) 0.85f else if (threeD) 0.8f else 1f))
-                    // flat (Google-style) unless 3D buildings are switched on in Settings
-                    if (!threeD) l.setProperties(PropertyFactory.fillExtrusionHeight(0f), PropertyFactory.fillExtrusionBase(0f))
-                    else l.setProperties(
+                    // flat (Google-style) unless 3D buildings are switched on in Settings. Flat = hide the 3D layer and
+                    // use the plain 2D building layer instead: a zero-height 3D layer still covers labels when tilted.
+                    if (!threeD) l.setProperties(PropertyFactory.visibility(Property.NONE))
+                    else l.setProperties(PropertyFactory.visibility(Property.VISIBLE),
                         PropertyFactory.fillExtrusionHeight(Expression.interpolate(Expression.linear(), Expression.zoom(),
                             Expression.stop(14.5f, 0f), Expression.stop(16f, scaled("render_height")))),
                         PropertyFactory.fillExtrusionBase(Expression.interpolate(Expression.linear(), Expression.zoom(),
@@ -402,7 +403,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 }
                 is FillLayer -> when {
                     l.sourceLayer == "building" -> {
-                        l.setMinZoom(15.5f)
+                        l.setMinZoom(15.5f); l.setMaxZoom(24f)      // the style stops it at 14 (3D takes over); keep it for flat mode
+                        l.setProperties(PropertyFactory.visibility(if (prefs().getBoolean("buildings3d", false)) Property.NONE else Property.VISIBLE))
                         l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#ECEDF0"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DEE0E4")) }
                     dark -> {}
                     l.sourceLayer == "water" -> l.setProperties(PropertyFactory.fillColor("#9CC0F9"))
