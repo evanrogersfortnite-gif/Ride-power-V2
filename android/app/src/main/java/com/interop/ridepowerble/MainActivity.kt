@@ -82,6 +82,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     private fun styleUrl() = "https://tiles.openfreemap.org/styles/" + (prefs().getString("mapStyle", "liberty") ?: "liberty")
     private var appliedStyle = ""
+    private var applied3d = false
     private var speedAlertLim = -1; private var speedAlertAt = 0L
     private var lowBattWarned = false
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -364,9 +365,13 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                     // Google-like: pale, slightly see-through, and lower so streets stay visible when tilted
                     fun scaled(key: String) = Expression.product(Expression.literal(0.6f),
                         Expression.coalesce(Expression.toNumber(Expression.get(key)), Expression.literal(0f)))
+                    val threeD = prefs().getBoolean("buildings3d", false)
                     l.setProperties(
-                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else "#EDEEF1"),
-                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.85f else 0.8f),
+                        PropertyFactory.fillExtrusionColor(if (dark) "#3A3F47" else if (threeD) "#EDEEF1" else "#E9EAED"),
+                        PropertyFactory.fillExtrusionOpacity(if (dark) 0.85f else if (threeD) 0.8f else 1f))
+                    // flat (Google-style) unless 3D buildings are switched on in Settings
+                    if (!threeD) l.setProperties(PropertyFactory.fillExtrusionHeight(0f), PropertyFactory.fillExtrusionBase(0f))
+                    else l.setProperties(
                         PropertyFactory.fillExtrusionHeight(Expression.interpolate(Expression.linear(), Expression.zoom(),
                             Expression.stop(14.5f, 0f), Expression.stop(16f, scaled("render_height")))),
                         PropertyFactory.fillExtrusionBase(Expression.interpolate(Expression.linear(), Expression.zoom(),
@@ -376,12 +381,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                     l.sourceLayer == "building" ->
                         l.setProperties(PropertyFactory.fillColor(if (dark) "#33373E" else "#ECEDF0"), PropertyFactory.fillOutlineColor(if (dark) "#2A2D33" else "#DEE0E4"))
                     dark -> {}
-                    l.sourceLayer == "water" -> l.setProperties(PropertyFactory.fillColor("#AAD3F5"))
-                    l.sourceLayer == "park" -> l.setProperties(PropertyFactory.fillColor("#CDEBD2"), PropertyFactory.fillOpacity(0.9f))
+                    l.sourceLayer == "water" -> l.setProperties(PropertyFactory.fillColor("#9CC0F9"))
+                    l.sourceLayer == "park" -> l.setProperties(PropertyFactory.fillColor("#C8EFD4"), PropertyFactory.fillOpacity(1f))
                     (l.sourceLayer == "landcover" || l.sourceLayer == "landuse") &&
                         (id.contains("wood") || id.contains("forest") || id.contains("grass") || id.contains("park")
                             || id.contains("cemetery") || id.contains("pitch") || id.contains("meadow")) ->
-                        l.setProperties(PropertyFactory.fillColor(if (id.contains("wood") || id.contains("forest")) "#C3E4C8" else "#D6EFD8"))
+                        l.setProperties(PropertyFactory.fillColor(if (id.contains("wood") || id.contains("forest")) "#BDE5C8" else "#D3F1DC"))
                 }
                 is SymbolLayer -> if (l.sourceLayer == "transportation_name") {
                     // street names only: road-number shields have their own fixed-size box, leave them alone
@@ -392,7 +397,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
         }
         // softer, Google-like land colour on the standard style
-        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F7F7F5"))
+        if (!dark) st.getLayer("background")?.setProperties(PropertyFactory.backgroundColor("#F5F5F5"))
     }
 
     /** Google-style navigation chevron. */
@@ -400,14 +405,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val s = 140
         val bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
+        // white disc with a soft shadow behind the chevron (Google-style)
+        c.drawCircle(70f, 74f, 64f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33000000 })
+        c.drawCircle(70f, 70f, 62f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
         val path = Path().apply {
-            moveTo(70f, 12f); lineTo(118f, 122f); lineTo(70f, 96f); lineTo(22f, 122f); close()
+            moveTo(70f, 22f); lineTo(106f, 110f); lineTo(70f, 90f); lineTo(34f, 110f); close()
         }
-        val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x55000000; style = Paint.Style.FILL }
-        c.save(); c.translate(0f, 5f); c.drawPath(path, shadow); c.restore()
-        c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 14f; strokeJoin = Paint.Join.ROUND
-        })
         c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BLUE; style = Paint.Style.FILL })
         return bmp
     }
@@ -417,8 +420,11 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st.getLayer("me-dot")?.setProperties(PropertyFactory.visibility(if (on) Property.NONE else Property.VISIBLE))
         st.getLayer("me-halo")?.setProperties(PropertyFactory.visibility(if (on) Property.NONE else Property.VISIBLE))
         st.getLayer("me-arrow")?.setProperties(PropertyFactory.visibility(if (on) Property.VISIBLE else Property.NONE))
-        st.getLayer("route-sel-casing")?.setProperties(PropertyFactory.lineWidth(if (on) 17f else 11f))
-        st.getLayer("route-sel-l")?.setProperties(PropertyFactory.lineWidth(if (on) 12f else 7.5f))
+        fun zw(vararg s: Pair<Float, Float>) = Expression.interpolate(Expression.linear(), Expression.zoom(), *s.map { Expression.stop(it.first, it.second) }.toTypedArray())
+        st.getLayer("route-sel-casing")?.setProperties(PropertyFactory.lineWidth(
+            if (on) zw(14f to 10f, 16f to 15f, 18f to 22f, 20f to 34f) else zw(12f to 6f, 15f to 9.5f, 17f to 14f, 19f to 24f)))
+        st.getLayer("route-sel-l")?.setProperties(PropertyFactory.lineWidth(
+            if (on) zw(14f to 7f, 16f to 11f, 18f to 16f, 20f to 26f) else zw(12f to 4f, 15f to 6.5f, 17f to 10f, 19f to 18f)))
     }
 
     // ============================ UI build ============================
@@ -534,49 +540,50 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     private fun buildSpeed(frame: FrameLayout) {
         speedCard = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(8), dp(14), dp(8))
-            background = shape(Color.WHITE, dp(20)); elevation = dp(5).toFloat()
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(13), dp(6), dp(11), dp(6))
+            background = shape(Color.WHITE, dp(16)); elevation = dp(4).toFloat()
         }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
-        tvSpeed = TextView(this).apply { text = "0"; textSize = 34f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        tvSpeed = TextView(this).apply { text = "0"; textSize = 28f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
         col.addView(tvSpeed)
-        col.addView(TextView(this).apply { text = "mph"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER })
+        col.addView(TextView(this).apply { text = "mph"; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER })
         speedCard.addView(col)
         tvLimit = TextView(this).apply {
-            textSize = 17f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(4), RED) }
+            textSize = 14f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(3), RED) }
             visibility = View.GONE
         }
-        speedCard.addView(tvLimit, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(12) })
+        speedCard.addView(tvLimit, LinearLayout.LayoutParams(dp(40), dp(40)).apply { leftMargin = dp(10) })
         // battery block, floating next to the speed
         battCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(14), dp(9), dp(14), dp(9))
-            background = shape(Color.WHITE, dp(20)); elevation = dp(5).toFloat()
+            setPadding(dp(11), dp(6), dp(11), dp(6))
+            background = shape(Color.WHITE, dp(16)); elevation = dp(4).toFloat()
             setOnClickListener { showBatteryDetails() }
         }
-        tvBatt = TextView(this).apply { text = "–%"; textSize = 24f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        tvBatt = TextView(this).apply { text = "–%"; textSize = 20f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
         battCard.addView(tvBatt)
         val track = FrameLayout(this).apply { background = shape(0xFFE8EAED.toInt(), dp(3)) }
         battFill = View(this).apply { background = shape(MUTED, dp(3)) }
         track.addView(battFill, FrameLayout.LayoutParams(0, MATCH))
-        battCard.addView(track, LinearLayout.LayoutParams(dp(64), dp(6)).apply { topMargin = dp(3); bottomMargin = dp(4) })
-        tvRange = TextView(this).apply { text = "– mi"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER }
+        battCard.addView(track, LinearLayout.LayoutParams(dp(BAR_W), dp(5)).apply { topMargin = dp(2); bottomMargin = dp(3) })
+        tvRange = TextView(this).apply { text = "– mi"; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER }
         battCard.addView(tvRange)
-        tvVolts = TextView(this).apply { text = ""; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER; visibility = View.GONE }
+        tvVolts = TextView(this).apply { text = ""; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER; visibility = View.GONE }
         battCard.addView(tvVolts)
-        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM }
+        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, 0, dp(8), dp(8)) }
         hudRow.addView(speedCard)
         hudRow.addView(battCard, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(10) })
         // bike status chips (cruise / reverse / brake / anti-theft / cruise countdown) above the cards
         statusRow = LinearLayout(this).apply { visibility = View.GONE }
-        hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         hud.addView(statusRow, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = dp(8) })
         hud.addView(hudRow)
         frame.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP).apply {
-            gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(14), 0, 0, dp(22))
+            gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(14), 0, 0, dp(14))
         })
     }
+    private val BAR_W = 54
 
     private fun buildSheet(frame: FrameLayout) {
         sheet = LinearLayout(this).apply {
@@ -675,7 +682,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(navBottom, mode == Mode.NAV)
         vis(recenterPill, mode == Mode.NAV && !follow)
         if (mode != Mode.BROWSE && mode != Mode.PLACE) resultsCard.visibility = View.GONE
-        (hud.layoutParams as FrameLayout.LayoutParams).bottomMargin = if (mode == Mode.NAV) dp(124) else dp(22)
+        (hud.layoutParams as FrameLayout.LayoutParams).bottomMargin = if (mode == Mode.NAV) dp(116) else dp(14)
         hud.requestLayout()
         setNavLayers(mode == Mode.NAV)
         val st = map?.style
@@ -1249,6 +1256,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         navBearing = lastLoc?.let { nav!!.snap(it.latitude, it.longitude, 0).bearing }
             ?: Geo.bearing(r.points[0].lat, r.points[0].lon, r.points[1].lat, r.points[1].lon)
         mode = Mode.NAV; applyMode()
+        loadStreetNames(nav!!)
         val first = nav!!.maneuvers.first()
         speak("Starting route to ${d.title}. " + if (first.type == Maneuver.Type.ARRIVE) "Head straight to your destination."
               else "In ${spokenDist(first.along)}, ${NavRoute.text(first.type).lowercase()}.")
@@ -1314,7 +1322,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val dm = max(0.0, m.along - s.along)
         tvTurnIcon.text = NavRoute.glyph(m.type)
         tvTurnDist.text = fmtTurnDist(dm)
-        tvTurnText.text = if (m.type == Maneuver.Type.ARRIVE) "Arrive at ${d.title}" else NavRoute.text(m.type)
+        tvTurnText.text = if (m.type == Maneuver.Type.ARRIVE) "Arrive at ${d.title}"
+            else streetAt(mi)?.let { Router.shortStreet(it) } ?: NavRoute.text(m.type)
+        tvTurnText.textSize = if (streetAt(mi) != null && m.type != Maneuver.Type.ARRIVE) 26f else 18f
         val next = nr.maneuvers.getOrNull(mi + 1)
         if (next != null && next.along - m.along < 250) {
             tvThen.text = "Then  ${NavRoute.glyph(next.type)}"; tvThen.visibility = View.VISIBLE
@@ -1325,7 +1335,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val remM = (nr.total - s.along) + if (onRoute) 0.0 else s.offRoute
         val remS = remM / max(1.0, nr.total) * eta(nr.route)
         tvEta.text = fmtDuration(max(1, (remS / 60).roundToInt()))
-        val arrivePct = if (lastPct >= 0) lastPct - (remM / 1609.34) / max(0.01, range.rangeAt(1.0, rangeMph())) else null
+        val arrivePct = if (lastPct >= 0 && BleManager.connected) lastPct - (remM / 1609.34) / max(0.01, range.rangeAt(1.0, rangeMph())) else null
         tvEtaSub.text = "${fmtMiles(remM)}  ·  ${clock(remS.roundToInt())}" +
             (arrivePct?.let { "  ·  🔋 ${max(0, it.roundToInt())}% left" } ?: "")
         tvEtaSub.setTextColor(if (arrivePct != null && arrivePct < 8) RED else MUTED)
@@ -1346,12 +1356,23 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         m.animateCamera(CameraUpdateFactory.newCameraPosition(cp), 950)
     }
 
+    private fun loadStreetNames(nr: NavRoute) {
+        val pts = nr.streetSamplePoints()
+        searchExec.execute {
+            val names = Router.streetNames(pts)
+            runOnUiThread { if (nav === nr) nr.streets = names }
+        }
+    }
+
+    private fun streetAt(mi: Int): String? = nav?.streets?.getOrNull(mi)
+
     private fun announce(mi: Int, m: Maneuver, dm: Double) {
         val stage = manStage[mi] ?: 0
         val arrive = m.type == Maneuver.Type.ARRIVE
-        val what = if (arrive) "your destination will be ahead" else NavRoute.text(m.type).lowercase()
+        val onto = streetAt(mi)?.let { " onto $it" } ?: ""
+        val what = if (arrive) "your destination will be ahead" else NavRoute.text(m.type).lowercase() + onto
         when {
-            !arrive && dm <= 35 && stage < 3 -> { speak(NavRoute.text(m.type)); manStage[mi] = 3 }
+            !arrive && dm <= 35 && stage < 3 -> { speak(NavRoute.text(m.type) + onto); manStage[mi] = 3 }
             dm <= 160 && dm > 35 && stage < 2 -> { speak("In ${spokenDist(dm)}, $what"); manStage[mi] = 2 }
             dm <= 820 && dm > 400 && stage < 1 -> { speak("In ${spokenDist(dm)}, $what"); manStage[mi] = 1 }
         }
@@ -1366,6 +1387,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             runOnUiThread {
                 if (r != null && mode == Mode.NAV && dest === d) {
                     routes = listOf(r); sel = 0; nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear(); navLearnable = false
+                    loadStreetNames(nav!!)
                     lastLoc?.let { onNavFix(it) }
                 }
             }
@@ -1596,7 +1618,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         tvBatt.text = "${p.roundToInt()}%"
         tvBatt.setTextColor(if (live) INK else MUTED)
         battFill.background = shape(col, dp(3))
-        (battFill.layoutParams as FrameLayout.LayoutParams).width = (dp(64) * p / 100.0).roundToInt().coerceAtLeast(dp(3))
+        (battFill.layoutParams as FrameLayout.LayoutParams).width = (dp(BAR_W) * p / 100.0).roundToInt().coerceAtLeast(dp(3))
         battFill.requestLayout()
         val mi = range.rangeAt(p, rangeMph())
         tvRange.text = "≈${mi.roundToInt()} mi @${rangeMph().roundToInt()}" + if (rangeAuto()) " avg" else ""
@@ -1781,6 +1803,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val m = map ?: return
         if (appliedStyle.isNotEmpty() && styleUrl() != appliedStyle) {
             appliedStyle = styleUrl()
+            m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
+        } else if (p.getBoolean("buildings3d", false) != applied3d) {
+            applied3d = p.getBoolean("buildings3d", false)
             m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
         } else m.style?.getLayer("poi-l")?.setProperties(
             PropertyFactory.visibility(if (p.getBoolean("showPois", true)) Property.VISIBLE else Property.NONE))

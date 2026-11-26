@@ -69,6 +69,11 @@ class NavRoute(val route: Router.Route) {
     val cum = Geo.cumulative(pts)
     val total = cum.last()
     val maneuvers: List<Maneuver> = detectManeuvers()
+    /** Street you turn onto at each manoeuvre (filled in shortly after the route starts), or null. */
+    @Volatile var streets: List<String?> = emptyList()
+
+    /** Points just after each turn, used to look up the street name you turn onto. */
+    fun streetSamplePoints(): List<Router.Pt> = maneuvers.map { Geo.pointAt(pts, cum, it.along + 25.0) }
 
     /** Snap a GPS fix onto the route, searching near the previous segment first. */
     fun snap(lat: Double, lon: Double, hintSeg: Int): Snap {

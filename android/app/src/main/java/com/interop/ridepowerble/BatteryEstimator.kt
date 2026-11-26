@@ -19,12 +19,13 @@ class BatteryEstimator(ctx: Context) {
 
     init {
         for ((k, v) in prefs.all) if (v is Float) state[k] = v.toDouble()
-        // carry the last % over from the previous version's storage
-        if (!state.containsKey("soc")) {
+        // don't carry the % over from the old estimator (it was wrong); only the throttle's rest level
+        if (!state.containsKey("thrIdle")) {
             val old = ctx.getSharedPreferences("battery", Context.MODE_PRIVATE)
-            old.getFloat("soc", -1f).takeIf { it >= 0 }?.let { state["soc"] = it.toDouble() }
-            old.getFloat("thrIdle", -1f).takeIf { it >= 0 }?.let { state["thrIdle"] = it.toDouble() }
+            old.getFloat("thrIdle", -1f).takeIf { it in 0f..1f }?.let { state["thrIdle"] = it.toDouble() }
         }
+        // one-time: drop a % copied from the old estimator by the previous update
+        if ((state["ver"] ?: 0.0) < 3.0) { state.remove("soc"); state["ver"] = 3.0; prefs.edit().remove("soc").putFloat("ver", 3f).apply() }
         core = BatteryCore(state)
         core.fixedSeries = ctx.getSharedPreferences("app", Context.MODE_PRIVATE).getInt("packSeries", 0)
     }

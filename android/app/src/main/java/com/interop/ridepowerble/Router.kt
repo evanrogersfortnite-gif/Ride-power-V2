@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -111,6 +112,51 @@ object Router {
             a.optString("postcode", "") to line.ifEmpty { o.optString("display_name", "") }
         } catch (e: Exception) { null }
     }
+
+    /**
+     * Street names at points along a route (OpenStreetMap via Overpass): for each point, the
+     * nearest named road within ~20 m, or null. Used for "Turn right onto Dragon Road".
+     */
+    fun streetNames(points: List<Pt>): List<String?> {
+        if (points.isEmpty()) return emptyList()
+        return try {
+            val q = "[out:json][timeout:20];(" + points.joinToString("") {
+                "way(around:18,${"%.6f".format(Locale.US, it.lat)},${"%.6f".format(Locale.US, it.lon)})[highway][name];"
+            } + ");out tags geom;"
+            val els = JSONObject(overpass(q, 8000, 20000)).getJSONArray("elements")
+            data class W(val name: String, val geom: List<Pt>)
+            val ways = ArrayList<W>()
+            for (i in 0 until els.length()) {
+                val e = els.getJSONObject(i)
+                val name = e.optJSONObject("tags")?.optString("name", "") ?: ""
+                val g = e.optJSONArray("geometry") ?: continue
+                if (name.isEmpty()) continue
+                ways += W(name, (0 until g.length()).map { val o = g.getJSONObject(it); Pt(o.getDouble("lat"), o.getDouble("lon")) })
+            }
+            points.map { p ->
+                var best: String? = null; var bestD = 22.0
+                for (w in ways) for (k in 0 until w.geom.size - 1) {
+                    val d = segDist(p, w.geom[k], w.geom[k + 1])
+                    if (d < bestD) { bestD = d; best = w.name }
+                }
+                best
+            }
+        } catch (e: Exception) { points.map { null } }
+    }
+
+    private fun segDist(p: Pt, a: Pt, b: Pt): Double {
+        val kx = 111320.0 * Math.cos(Math.toRadians(a.lat)); val ky = 110540.0
+        val bx = (b.lon - a.lon) * kx; val by = (b.lat - a.lat) * ky
+        val px = (p.lon - a.lon) * kx; val py = (p.lat - a.lat) * ky
+        val len2 = bx * bx + by * by
+        val t = if (len2 > 0) ((px * bx + py * by) / len2).coerceIn(0.0, 1.0) else 0.0
+        return Math.hypot(px - bx * t, py - by * t)
+    }
+
+    /** "Dragon Road" -> "Dragon Rd" (as Google shows it). */
+    fun shortStreet(n: String): String = n.replace(Regex("\\bRoad\\b"), "Rd").replace(Regex("\\bStreet\\b"), "St")
+        .replace(Regex("\\bAvenue\\b"), "Ave").replace(Regex("\\bLane\\b"), "Ln").replace(Regex("\\bDrive\\b"), "Dr")
+        .replace(Regex("\\bCrescent\\b"), "Cres").replace(Regex("\\bPlace\\b"), "Pl").replace(Regex("\\bTerrace\\b"), "Ter")
 
     // ===================== places on the map =====================
     /** A named place to draw on the map. group: shop/food/health/fuel/bike/service/place */

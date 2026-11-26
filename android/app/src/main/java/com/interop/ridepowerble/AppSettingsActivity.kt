@@ -113,6 +113,8 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             line()
             toggle("🏪", "Shops & places on the map", "Names and icons when zoomed in", "showPois", true)
             line()
+            toggle("🏙", "3D buildings", "Off = flat buildings like Google Maps (clearer streets)", "buildings3d", false)
+            line()
             toggle("🧭", "3D view while navigating", "Tilted map that looks ahead", "navTilt", true)
             line()
             toggle("☀️", "Keep screen on", "Stop the screen sleeping while the map is open (always on while navigating)", "keepOn", false)
