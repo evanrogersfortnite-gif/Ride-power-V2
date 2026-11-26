@@ -198,22 +198,43 @@ object Router {
      * Search that understands real-world queries like "lodge road coop":
      * type-ahead results + brand aliases + nearby OSM shop names + street matching, ranked.
      */
+    private val PLACE_TYPES = setOf("city", "town", "village", "hamlet", "suburb", "neighbourhood", "quarter", "locality", "borough")
+
+    /** A town/village/suburb whose name matches [word] (typos allowed), near [near]. */
+    private fun findLocality(word: String, near: Pt?, known: List<Place>): Place? {
+        fun ok(p: Place) = p.cat in PLACE_TYPES && norm(p.title).split(" ").any { it == word || oneEdit(it, word) || (word.length >= 5 && it.startsWith(word)) }
+        known.firstOrNull { ok(it) }?.let { return it }
+        return (photon(word, near) + (if (System.currentTimeMillis() < photonDownUntil) geocode(word, near, false) else emptyList()))
+            .filter { ok(it) || (it.cat in PLACE_TYPES && norm(it.title).contains(word.take(5))) }
+            .minByOrNull { if (near == null) 0.0 else dist(near, it) }
+    }
+
     fun smartSearch(query: String, near: Pt?, deep: Boolean, alive: () -> Boolean = { true },
                     extra: List<Place> = emptyList()): List<Place> {
         val pool = LinkedHashMap<String, Place>()
-        fun add(list: List<Place>) { for (p in list) pool.putIfAbsent("${p.title.lowercase()}|${"%.3f".format(p.lat)}|${"%.3f".format(p.lon)}", p) }
+        @Synchronized fun add(list: List<Place>) { for (p in list) pool.putIfAbsent("${p.title.lowercase()}|${"%.3f".format(p.lat)}|${"%.3f".format(p.lon)}", p) }
         add(extra)
         if (!alive()) return emptyList()
         val al = aliased(query)
         val (street, nameWords) = parseQuery(al)
-        // every source runs at the same time; whatever answers before the deadline is used
         val photonOk = System.currentTimeMillis() >= photonDownUntil
+        // every source runs at the same time; whatever answers before the deadline is used
         val jobs = ArrayList<java.util.concurrent.Future<List<Place>>>()
         fun job(f: () -> List<Place>) { jobs += searchPool.submit(java.util.concurrent.Callable { try { f() } catch (e: Exception) { emptyList<Place>() } }) }
         job { photon(query, near) }
         if (al != query.lowercase()) job { photon(al, near) }
         if (deep || !photonOk) job { geocode(al, near, false) }
         if (deep && near != null && nameWords.isNotEmpty()) job { overpassNames(nameWords, near) }
+        // "winterbourne coop": find the place "Winterbourne", then the shop near it
+        val anchor = java.util.concurrent.atomic.AtomicReference<Place?>(null)
+        if (deep && street == null && nameWords.size >= 2) {
+            val known = extra
+            for (w in nameWords.filter { it.length >= 5 }.take(2)) job {
+                val loc = findLocality(w, near, known) ?: return@job emptyList()
+                anchor.compareAndSet(null, loc)
+                overpassNames(nameWords.filter { it != w }, Pt(loc.lat, loc.lon), 3000)
+            }
+        }
         val streetJob = if (deep && street != null) searchPool.submit(java.util.concurrent.Callable {
             try { photon(street, near).ifEmpty { geocode(street, near, false) } } catch (e: Exception) { emptyList<Place>() } }) else null
         val deadline = System.currentTimeMillis() + (if (deep) 9000 else 4500)
@@ -228,6 +249,13 @@ object Router {
                     "trunk", "service", "pedestrian", "road", "street") || it.title.lowercase().contains(street!!.substringBefore(" ")) }
                 ?.let { Pt(it.lat, it.lon) }
         } catch (e: Exception) { streetJob?.cancel(true); null }
+        val loc = anchor.get()
+        if (loc != null) {
+            // rank by the shop words, close to that place; the place itself is still offered
+            val locWord = norm(loc.title)
+            val rest = nameWords.filter { w -> locWord.split(" ").none { it == w || oneEdit(it, w) } }.joinToString(" ")
+            return rank(pool.values.toList(), rest.ifEmpty { al }, null, Pt(loc.lat, loc.lon), near)
+        }
         return rank(pool.values.toList(), al, street, streetPt, near)
     }
 
@@ -248,6 +276,7 @@ object Router {
                 val wj = w.replace(" ", "")
                 when {
                     title.split(" ").any { it == w } || titleJoined.contains(wj) -> sc += 12
+                    w.length >= 4 && title.split(" ").any { oneEdit(it, w) } -> sc += 10
                     hay.contains(w) -> sc += 8
                     w.length >= 5 && hay.split(" ").any { oneEdit(it, w) } -> sc += 7     // small typo
                 }
@@ -281,12 +310,14 @@ object Router {
     }
 
     /** Nearby shops/amenities whose name matches the words (Overpass, punctuation-tolerant). */
-    private fun overpassNames(words: List<String>, around: Pt): List<Place> {
+    private fun overpassNames(words: List<String>, around: Pt, radius: Int = 8000): List<Place> {
         return try {
-            val pat = words.filter { it.length >= 2 }.joinToString(".*") { looseRegex(it) }
+            // a name matching ANY of the words ("winterbourne coop" still finds "Co-op Food"); ranking sorts it out
+            val ws = words.filter { it.length >= 3 }.ifEmpty { words.filter { it.length >= 2 } }
+            val pat = ws.joinToString("|") { looseRegex(it) }
             if (pat.isEmpty()) return emptyList()
-            val q = "[out:json][timeout:10];nwr(around:8000,${around.lat},${around.lon})[\"name\"~\"$pat\",i]" +
-                    "[~\"^(shop|amenity|leisure|tourism|office|craft)$\"~\".\"];out center tags 40;"
+            val q = "[out:json][timeout:10];nwr(around:$radius,${around.lat},${around.lon})[\"name\"~\"$pat\",i]" +
+                    "[~\"^(shop|amenity|leisure|tourism|office|craft)$\"~\".\"];out center tags 60;"
             val els = JSONObject(overpass(q, 4000, 7000)).getJSONArray("elements")
             val out = ArrayList<Place>()
             for (i in 0 until els.length()) {

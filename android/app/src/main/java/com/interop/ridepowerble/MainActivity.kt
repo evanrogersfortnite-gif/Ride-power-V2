@@ -102,6 +102,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private lateinit var estimator: BatteryEstimator
     private lateinit var learner: TripLearner
     private lateinit var range: RangeLearner
+    private lateinit var rideLog: RideLogger
     private val exec = Executors.newSingleThreadExecutor()        // routing
     private val searchExec = Executors.newCachedThreadPool()      // type-ahead (parallel, stale ones abort)
     private val limitExec = Executors.newSingleThreadExecutor()   // speed limits
@@ -138,6 +139,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     // navigation
     private var nav: NavRoute? = null
     private var navSeg = 0
+    private var navAlong = 0.0
+    private var jumpCount = 0
     private var navBearing = 0.0
     private var navStart = 0L
     private var navLearnable = true
@@ -197,6 +200,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         estimator = BatteryEstimator(this)
         learner = TripLearner(this)
         range = RangeLearner(this)
+        rideLog = RideLogger(this)
         trafficOn = prefs().getBoolean("traffic", false) && trafficKey().isNotEmpty()
         muted = prefs().getBoolean("muted", false)
         routeProfile = prefs().getString("defProfile", "trekking") ?: "trekking"
@@ -714,8 +718,21 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val words = Router.searchWords(q)
         if (words.isEmpty()) return emptyList()
         val out = LinkedHashMap<String, Router.Place>()
-        fun hit(name: String) = Router.compact(name).let { n -> words.any { n.contains(it) } }
+        fun hit(name: String): Boolean {
+            val n = Router.compact(name)
+            val parts = name.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+            return words.any { w -> n.contains(w) || (w.length >= 5 && parts.any { Router.oneEdit(it, w) }) }
+        }
         for (p in pois) if (hit(p.name)) out.putIfAbsent(p.name + p.lat, Router.Place(p.name, p.lat, p.lon, p.name, p.sub, p.cat))
+        // places you've searched before
+        try {
+            val arr = JSONArray(prefs().getString("recent", "[]"))
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val pl = Router.Place(o.optString("n"), o.optDouble("lat"), o.optDouble("lon"), o.optString("l"), o.optString("s"), o.optString("c"))
+                if (hit(pl.title) || hit(pl.subtitle)) out.putIfAbsent(pl.title + pl.lat, pl)
+            }
+        } catch (_: Exception) {}
         try {
             val m = map; val st = m?.style
             if (m != null && st != null) {
@@ -726,6 +743,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                     val g = f.geometry() as? org.maplibre.geojson.Point ?: continue
                     if (!hit(name)) continue
                     val cls = if (f.hasProperty("subclass")) f.getStringProperty("subclass") ?: "" else ""
+                    out.putIfAbsent(name + g.latitude(), Router.Place(name, g.latitude(), g.longitude(), name, "", cls))
+                }
+                // towns / villages / suburbs on screen ("Winterbourne" in "winterborne coop")
+                val placeIds = st.layers.filter { (it as? SymbolLayer)?.sourceLayer == "place" }.map { it.id }.toTypedArray()
+                if (placeIds.isNotEmpty()) for (f in m.queryRenderedFeatures(android.graphics.RectF(0f, 0f, mapView.width.toFloat(), mapView.height.toFloat()), *placeIds)) {
+                    val name = (if (f.hasProperty("name")) f.getStringProperty("name") else null) ?: continue
+                    val g = f.geometry() as? org.maplibre.geojson.Point ?: continue
+                    if (!hit(name)) continue
+                    val cls = if (f.hasProperty("class")) f.getStringProperty("class") ?: "village" else "village"
                     out.putIfAbsent(name + g.latitude(), Router.Place(name, g.latitude(), g.longitude(), name, "", cls))
                 }
             }
@@ -1187,7 +1213,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun startNav() {
         val r = routes.getOrNull(sel) ?: return
         val d = dest ?: return
-        nav = NavRoute(r); navSeg = 0; manStage.clear()
+        nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear()
         navStart = System.currentTimeMillis(); navLearnable = true; offRouteCount = 0
         tripStartMiles = range.totalMiles
         follow = true
@@ -1218,8 +1244,20 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         loadPoisAround(loc.latitude, loc.longitude)
         val nr = nav ?: return
         val d = dest ?: return
-        val s = nr.snap(loc.latitude, loc.longitude, navSeg)
+        // ignore very poor GPS fixes (they cause the arrow to jump onto other roads)
+        if (loc.hasAccuracy() && loc.accuracy > 45f && navAlong > 0) return
+        // where are we on the route? Only look near our last position...
+        val maxAhead = 80.0 + loc.speed * 8.0
+        var s = nr.snapNear(loc.latitude, loc.longitude, navAlong, maxAhead)
+        if (s.offRoute > 35) {
+            // ...unless it's consistently somewhere else on the route (e.g. GPS caught up, shortcut)
+            val g = nr.snap(loc.latitude, loc.longitude, navSeg)
+            if (g.offRoute < 25 && abs(g.along - navAlong) > 40) {
+                if (++jumpCount >= 3) { s = g; jumpCount = 0 }
+            } else jumpCount = 0
+        } else jumpCount = 0
         navSeg = s.seg
+        navAlong = s.along
         val onRoute = s.offRoute < 35
         val lat = if (onRoute) s.lat else loc.latitude
         val lon = if (onRoute) s.lon else loc.longitude
@@ -1295,7 +1333,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val r = Router.route(from.latitude, from.longitude, d.lat, d.lon, 0, profile)
             runOnUiThread {
                 if (r != null && mode == Mode.NAV && dest === d) {
-                    routes = listOf(r); sel = 0; nav = NavRoute(r); navSeg = 0; manStage.clear(); navLearnable = false
+                    routes = listOf(r); sel = 0; nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear(); navLearnable = false
                     lastLoc?.let { onNavFix(it) }
                 }
             }
@@ -1366,6 +1404,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             odoLoc = loc
         } else odoLoc = null
         lastLoc = loc
+        if (!BleManager.connected && mode == Mode.NAV)   // GPS-only ride log while navigating without the bike
+            rideLog.log(loc.latitude, loc.longitude, if (loc.hasSpeed()) loc.speed * 2.2369363 else null, loc.accuracy,
+                null, null, null, lastPct, false, mode.name, navAlong)
 
         val mph = if (loc.hasSpeed()) (loc.speed * 2.2369363).roundToInt() else 0
         tvSpeed.text = mph.toString()
@@ -1423,6 +1464,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     // ============================ battery ============================
     override fun onRealtime(d: BleManager.Realtime) = runOnUiThread {
         val pct = estimator.update(d.batteryV, d.throttleV, d.speedRpm)
+        val l = lastLoc
+        rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
+            d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong)
         lastVolts = d.batteryV
         if (pct >= 0) {
             lastPct = pct; range.onSoc(pct)
@@ -1625,7 +1669,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         applyMode()
     }
     override fun onPause() {
-        super.onPause(); mapView.onPause(); BleManager.removeListener(this); estimator.save(); range.save()
+        super.onPause(); mapView.onPause(); BleManager.removeListener(this); estimator.save(); range.save(); rideLog.flush()
         lastLoc?.let {
             getSharedPreferences("map", Context.MODE_PRIVATE).edit()
                 .putFloat("lat", it.latitude.toFloat()).putFloat("lon", it.longitude.toFloat()).apply()
@@ -1638,6 +1682,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         super.onDestroy()
         try { (getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(this) } catch (_: Exception) {}
         tts?.shutdown()
+        rideLog.close()
         mapView.onDestroy(); exec.shutdownNow(); searchExec.shutdownNow(); limitExec.shutdownNow()
     }
 

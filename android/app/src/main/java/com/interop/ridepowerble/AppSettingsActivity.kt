@@ -151,6 +151,10 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 }
             }
             line()
+            row("📤", "Export a ride log", "${RideLogger.rides(this@AppSettingsActivity).size} recorded — share one to help tune battery & ETA") {
+                RideLogger.export(this@AppSettingsActivity)
+            }
+            line()
             row("🔒", "What VoltRoute stores", "Everything stays on this phone") {
                 AlertDialog.Builder(this).setTitle("Your data")
                     .setMessage("VoltRoute has no account and no tracking. Searches, saved places, learned battery/ETA data and your TomTom key are stored only on this phone.\n\n" +

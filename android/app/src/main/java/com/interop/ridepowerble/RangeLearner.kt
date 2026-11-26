@@ -9,7 +9,10 @@ import android.content.Context
  * Starts from a conservative 30-miles-per-full-charge guess until it has data.
  */
 class RangeLearner(ctx: Context) {
-    private val prefs = ctx.getSharedPreferences("range", Context.MODE_PRIVATE)
+    private val prefs = ctx.getSharedPreferences("range", Context.MODE_PRIVATE).also {
+        // v2: data learned with the old battery estimator was wrong (it drained the % while riding) — start fresh
+        if (it.getInt("ver", 1) < 2) it.edit().clear().putInt("ver", 2).apply()
+    }
 
     private var samples = prefs.getInt("n", 0)
     private var milesPerPct = run {

@@ -82,6 +82,22 @@ class NavRoute(val route: Router.Route) {
         return best
     }
 
+    /**
+     * Snap only to the part of the route near where you already are: from a little behind
+     * [along] to [maxAhead] metres ahead. Stops a bad GPS fix (or a route that passes near
+     * itself) from jumping you to a different part of the route.
+     */
+    fun snapNear(lat: Double, lon: Double, along: Double, maxAhead: Double): Snap {
+        var best: Snap? = null
+        for (i in 0 until pts.size - 1) {
+            if (cum[i + 1] < along - 40) continue
+            if (cum[i] > along + maxAhead) break
+            val s = project(lat, lon, i)
+            if (best == null || s.offRoute < best.offRoute) best = s
+        }
+        return best ?: project(lat, lon, 0)
+    }
+
     private fun project(lat: Double, lon: Double, i: Int): Snap {
         val a = pts[i]; val b = pts[i + 1]
         // local flat projection (metres) around a
