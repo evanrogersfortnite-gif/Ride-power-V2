@@ -32,6 +32,11 @@ class BatteryEstimator(ctx: Context) {
             for (k in listOf("sxx", "sxy", "syy", "sxs", "sys", "n")) { state.remove(k); e.remove(k) }
             state["ver"] = 4.0; e.putFloat("ver", 4f).apply()
         }
+        // v5: resistance was learned at low speed (under-reads); relearn from peak drops
+        if ((state["ver"] ?: 0.0) < 5.0) {
+            val e = prefs.edit(); for (k in listOf("R", "RN")) { state.remove(k); e.remove(k) }
+            state["ver"] = 5.0; e.putFloat("ver", 5f).apply()
+        }
         core = BatteryCore(state)
         val app = ctx.getSharedPreferences("app", Context.MODE_PRIVATE)
         core.fixedSeries = app.getInt("packSeries", 0)
@@ -86,9 +91,9 @@ class BatteryEstimator(ctx: Context) {
     fun summary(): String {
         val s = core.series
         val pack = if (s > 0) "${s}S pack: full ${"%.1f".format(s * 4.2)} V, empty ${"%.1f".format(s * 3.0)} V" else "Pack size: learning…"
-        val pulls = core.resistanceSamples / 4   // ~4 samples per pull
+        val pulls = core.resistanceSamples
         val res = if (pulls > 0) "${"%.3f".format(core.resistance)} Ω — learned from ~$pulls full-throttle pulls"
-                  else "not learned yet — needs full throttle from a slow start (3–15 mph)"
+                  else "not learned yet — needs a few full-throttle pulls of 4+ seconds"
         val stops = if (core.coulombSamples > 0) "×${"%.2f".format(core.coulombScale)} — checked at ${core.coulombSamples} stops"
                     else "not checked yet — stop for ~20 s after riding a while"
         val relax = if (core.relaxSamples > 0) "${"%.0f".format(core.relaxRatio * 100)}% of the dip — from ${core.relaxSamples} stops"

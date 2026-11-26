@@ -70,11 +70,11 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
     private var socRestAnchor = -1.0
     private val thr3 = ArrayDeque<Double>()
     /** Pack internal resistance (Ω), learned from full-throttle pulls at the controller's current limit. */
-    val resistance get() = g("R", 0.09)
+    val resistance get() = g("R", 0.12)
     /** Learned correction between counted Ah and the voltage chart (1 = model exact). */
     val coulombScale get() = g("k", 1.0)
     val coulombSamples get() = g("kN", 0.0).toInt()
-    /** Number of full-throttle samples the resistance has been learned from (~1.4 per second of pull). */
+    /** Number of full-throttle pulls the resistance has been learned from. */
     val resistanceSamples get() = g("RN", 0.0).toInt()
     private fun g(k: String, d: Double) = st[k] ?: d
     private fun s(k: String, v: Double) { st[k] = v }
@@ -82,6 +82,7 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
     // ---- live state (not persisted) ----
     private var lastMph = 0.0
     private var fullThr = 0
+    private var pullMaxSag = 0.0; private var pullLimit = 0.0; private var pullKnown = false
     private var onSamples = 0
     private var offSamples = 0
     private var parkedSamples = 0
@@ -152,12 +153,19 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
         amps = if (ocvRef > 0 && (on || mph > 3)) ((ocvRef - v) / resistance).coerceIn(0.0, limitAmps) else 0.0
         // learn resistance: full throttle, accelerating from low speed = controller at its current limit
         // (only when we know this level's current limit)
-        // soft "accelerate strength" settings ramp the current up over a second or two, so only measure
-        // once full throttle has been held for ~3 s (the controller is then at its limit)
-        fullThr = if (thrFrac > 0.9) fullThr + 1 else 0
-        if (limitKnown && limitAmps > 5 && ocvRef > 0 && fullThr >= 4 && mph in 3.0..18.0 && speeds.size == 5 && mph - speeds.first() > 1.0) {
-            val r = ((ocvRef - v) / limitAmps).coerceIn(0.02, 0.4)
-            s("R", resistance * 0.95 + r * 0.05); s("RN", g("RN", 0.0) + 1)
+        // Learn resistance from the PEAK voltage drop of each full-throttle pull. At low speed the controller
+        // limits motor (phase) current and the battery supplies less; the battery only reaches its limit
+        // partway up the speed range — that's where the drop peaks (18–26 mph on the logged ride).
+        if (thrFrac > 0.9 && ocvRef > 0) {
+            fullThr++
+            pullMaxSag = maxOf(pullMaxSag, ocvRef - v)
+            pullLimit = limitAmps; pullKnown = limitKnown
+        } else {
+            if (fullThr >= 5 && pullKnown && pullLimit > 5 && pullMaxSag > 0.5) {   // pull of ~3.5 s or more
+                val r = (pullMaxSag / pullLimit).coerceIn(0.02, 0.4)
+                s("R", if (g("RN", 0.0) < 1) r else resistance * 0.85 + r * 0.15); s("RN", g("RN", 0.0) + 1)
+            }
+            fullThr = 0; pullMaxSag = 0.0
         }
         val dAh = amps * DT / 3600.0
         ahDisplay += dAh; ahRest += dAh
