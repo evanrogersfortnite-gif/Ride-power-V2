@@ -790,6 +790,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun applyMode() {
+        if (mode != Mode.ROUTES && (sheetCollapsed || sheet.translationY != 0f)) { sheetCollapsed = false; sheet.animate().cancel(); sheet.translationY = 0f }
         fun vis(v: View, on: Boolean) { v.visibility = if (on) View.VISIBLE else View.GONE }
         vis(topBox, mode == Mode.BROWSE || mode == Mode.PLACE)
         vis(chipsScroll, mode == Mode.BROWSE && resultsCard.visibility != View.VISIBLE)
@@ -1263,7 +1264,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         head.addView(TextView(this).apply { iconText("@bike  E-bike", INK, 24); gravity = Gravity.CENTER_VERTICAL; textSize = 22f; setTextColor(INK); setTypeface(null, Typeface.BOLD) },
             LinearLayout.LayoutParams(0, WRAP, 1f))
         head.addView(roundIcon("close") { closeAll() })
+        head.setOnTouchListener(sheetDrag)
         sheet.addView(head)
+        // keep a pulled-down sheet pulled down when its content refreshes
+        sheet.post { if (mode == Mode.ROUTES && sheetCollapsed) sheet.translationY = sheetMaxDrop() }
 
         val prof = LinearLayout(this).apply { setPadding(0, dp(12), 0, dp(4)) }
         prof.addView(toggleChip("@leaf  Quiet roads", routeProfile == "trekking") {
@@ -1409,7 +1413,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val r = routes.getOrNull(sel) ?: return
         follow = false
         val b = LatLngBounds.Builder().includes(r.points.map { LatLng(it.lat, it.lon) }).build()
-        m.animateCamera(CameraUpdateFactory.newLatLngBounds(b, dp(50), sbH + dp(150), dp(50), dp(420)), 700)
+        val bottom = if (sheet.visibility == View.VISIBLE && sheet.height > 0) (sheet.height - sheet.translationY).toInt() + dp(30) else dp(420)
+        m.animateCamera(CameraUpdateFactory.newLatLngBounds(b, dp(50), sbH + dp(150), dp(50), bottom), 700)
     }
 
     private fun flyTo(p: Router.Place) {
@@ -2154,8 +2159,42 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             else -> cat.replace('_', ' ').replaceFirstChar { it.uppercase() } }
     }
 
-    private fun handle() = View(this).apply { background = shape(0xFFDADCE0.toInt(), dp(3)) }.also {
-        it.layoutParams = LinearLayout.LayoutParams(dp(38), dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(12) }
+    /** Sheet grab handle: a wide invisible touch strip with the small grey bar in the middle (drag or tap). */
+    private fun handle() = FrameLayout(this).apply {
+        addView(View(this@MainActivity).apply { background = shape(0xFFDADCE0.toInt(), dp(3)) },
+            FrameLayout.LayoutParams(dp(38), dp(5)).apply { gravity = Gravity.CENTER })
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(22)).apply { bottomMargin = dp(4) }
+        setOnTouchListener(sheetDrag)
+    }
+
+    // ---- route sheet can be pulled down to see more map (like Google) ----
+    private var sheetCollapsed = false
+    private var dragStartY = 0f; private var dragStartT = 0f; private var dragMoved = false
+    private fun sheetMaxDrop(): Float {
+        val peekChild = sheet.getChildAt(3)                     // handle, header, route-type chips, main time line
+        val peek = if (peekChild != null) peekChild.bottom + dp(14) else dp(160)
+        return max(0, sheet.height - peek).toFloat()
+    }
+    private val sheetDrag = View.OnTouchListener { _, e ->
+        if (mode != Mode.ROUTES) return@OnTouchListener false
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> { dragStartY = e.rawY; dragStartT = sheet.translationY; dragMoved = false; true }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                val dy = e.rawY - dragStartY
+                if (abs(dy) > dp(6)) dragMoved = true
+                sheet.translationY = (dragStartT + dy).coerceIn(0f, sheetMaxDrop()); true
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                val collapse = if (!dragMoved) !sheetCollapsed else sheet.translationY > sheetMaxDrop() / 2
+                snapSheet(collapse); true
+            }
+            else -> false
+        }
+    }
+    private fun snapSheet(collapse: Boolean) {
+        sheetCollapsed = collapse
+        sheet.animate().translationY(if (collapse) sheetMaxDrop() else 0f).setDuration(220)
+            .withEndAction { if (mode == Mode.ROUTES) fitRoute() }.start()
     }
     private fun sectionLabel(t: String) = TextView(this).apply {
         text = t; textSize = 13f; setTextColor(MUTED); setTypeface(null, Typeface.BOLD); setPadding(dp(18), dp(12), dp(18), dp(4))
