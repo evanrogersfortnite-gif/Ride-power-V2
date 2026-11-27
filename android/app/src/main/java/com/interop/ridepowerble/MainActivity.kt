@@ -928,7 +928,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         Router.categoryFor(q)?.let { c ->
             if (enter) { areaSearch(c, true); return }
             val s0 = ++searchSeq
-            ui.postDelayed({ if (s0 == searchSeq && searchBar.text.toString().trim() == q) areaSearch(c, true) }, 650)
+            ui.postDelayed({ if (s0 == searchSeq && searchBar.text.toString().trim() == q) areaSearch(c, true) }, 450)
             return
         }
         val seq = ++searchSeq
@@ -979,16 +979,22 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val cLat = (b.latitudeNorth + b.latitudeSouth) / 2; val cLon = (b.longitudeEast + b.longitudeWest) / 2
         // never more than ~15 km across (zoomed far out would ask for thousands)
         val hLat = minOf((b.latitudeNorth - b.latitudeSouth) / 2, 0.07); val hLon = minOf((b.longitudeEast - b.longitudeWest) / 2, 0.11)
+        showOnlyFound(true)
+        // instant: the places already in the map data on the phone (no network); the online search then adds any missing
+        val quick = tilePlaces(c, cLat - hLat, cLon - hLon, cLat + hLat, cLon + hLon)
+        if (quick.isNotEmpty()) { areaBusy = false; showFound(c, quick, fit); areaBusy = true }
         searchExec.execute {
-            var list = Router.searchArea(c, cLat - hLat, cLon - hLon, cLat + hLat, cLon + hLon)
+            var list = Router.searchArea(c, cLat - hLat, cLon - hLon, cLat + hLat, cLon + hLon)?.let { merge(quick, it) }
             if (list != null && list.isEmpty() && fit)      // none on screen: look a bit wider
                 list = Router.searchArea(c, cLat - hLat * 3, cLon - hLon * 3, cLat + hLat * 3, cLon + hLon * 3)
             runOnUiThread {
                 if (seq != searchSeq) return@runOnUiThread
                 areaBusy = false
                 when {
+                    list == null && quick.isNotEmpty() -> areaPill(null, false)
                     list == null -> areaPill("Search is busy — tap to try again", true)
                     list.isEmpty() -> showFound(c, emptyList(), false)
+                    quick.isNotEmpty() -> { foundPlaces = list; srcFound?.setGeoJson(foundJson()); areaPill(null, false) }   // just add the extra pins, don't move the map again
                     else -> showFound(c, list, fit)
                 }
             }
@@ -1026,7 +1032,42 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         return JSONObject().put("type", "FeatureCollection").put("features", fs).toString()
     }
 
+    /** Places of this kind in the map tiles already loaded on the phone. */
+    private fun tilePlaces(c: Router.Category, s: Double, w: Double, n: Double, e: Double): List<Router.Place> {
+        return try {
+            val st = map?.style ?: return emptyList()
+            val srcId = st.layers.mapNotNull { (it as? SymbolLayer)?.takeIf { l -> l.sourceLayer == "poi" }?.sourceId }.firstOrNull() ?: return emptyList()
+            val src = st.getSourceAs<org.maplibre.android.style.sources.VectorSource>(srcId) ?: return emptyList()
+            val vals = c.filters.map { it.substringAfter("=").removeSuffix("]") }.distinct()
+            val filt = Expression.match(Expression.get("subclass"), Expression.literal(false), *vals.map { Expression.stop(it, true) }.toTypedArray())
+            val out = ArrayList<Router.Place>()
+            for (f in src.querySourceFeatures(arrayOf("poi"), filt)) {
+                val g = f.geometry() as? org.maplibre.geojson.Point ?: continue
+                val la = g.latitude(); val lo = g.longitude()
+                if (la < s || la > n || lo < w || lo > e) continue
+                val name = (if (f.hasProperty("name")) f.getStringProperty("name") else null)?.ifEmpty { null } ?: c.one
+                val sub = if (f.hasProperty("subclass")) f.getStringProperty("subclass") ?: "" else ""
+                if (out.any { it.label == name && Geo.dist(it.lat, it.lon, la, lo) < 60 }) continue   // same place in two tiles
+                out += Router.Place(name, la, lo, name, c.one, sub)
+            }
+            out
+        } catch (_: Exception) { emptyList() }
+    }
+
+    /** Online results added to the instant ones, without doubles. */
+    private fun merge(a: List<Router.Place>, b: List<Router.Place>): List<Router.Place> =
+        a.map { q -> b.firstOrNull { Geo.dist(it.lat, it.lon, q.lat, q.lon) < 50 } ?: q } +   // online has the address
+            b.filter { r -> a.none { Geo.dist(it.lat, it.lon, r.lat, r.lon) < 50 } }
+
+    /** While results are shown, hide the map's other shop icons so only the results stand out (like Google). */
+    private fun showOnlyFound(on: Boolean) {
+        val st = map?.style ?: return
+        val vis = if (!on && prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE
+        for (id in listOf("g-poi", "g-poi-major")) st.getLayer(id)?.setProperties(PropertyFactory.visibility(vis))
+    }
+
     private fun clearFound() {
+        showOnlyFound(false)
         foundCat = null; foundPlaces = emptyList(); foundCam = null; areaBusy = false
         srcFound?.setGeoJson(fc(emptyList()))
         if (::searchAreaBtn.isInitialized) searchAreaBtn.visibility = View.GONE
@@ -1049,9 +1090,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     /** After you pan/zoom away from the results, offer "Search this area". */
     private fun checkSearchArea() {
         val m = map ?: return
-        if (foundCat == null || !::searchAreaBtn.isInitialized || areaBusy) return
+        if (foundCat == null || !::searchAreaBtn.isInitialized) return
         val cp = m.cameraPosition; val t = cp.target ?: return
         if (foundFitting) { foundFitting = false; foundCam = t; foundZoom = cp.zoom; return }
+        if (areaBusy) return
         val f = foundCam ?: run { foundCam = t; foundZoom = cp.zoom; return }
         val b = m.projection.visibleRegion.latLngBounds
         val moved = abs(t.latitude - f.latitude) > (b.latitudeNorth - b.latitudeSouth) * 0.25 ||
