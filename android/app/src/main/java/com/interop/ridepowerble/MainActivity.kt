@@ -642,27 +642,27 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun buildSpeed(frame: FrameLayout) {
         // one navy bar, bottom-left: speed | charge ring | voltage + range (matches the app icon)
         val bar = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(22), dp(8), dp(20), dp(8))
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(NAVY_TOP, NAVY_BOTTOM)).apply { cornerRadius = dp(34).toFloat() }
-            elevation = dp(6).toFloat(); isClickable = true
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(6), dp(18), dp(6))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(NAVY_TOP, NAVY_BOTTOM)).apply { cornerRadius = dp(30).toFloat() }
+            isClickable = true   // no elevation: its shadow drew a grey smear under the pill
             setOnClickListener { showBatteryDetails() }
         }
         speedCard = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
-        tvSpeed = TextView(this).apply { text = "0"; textSize = 30f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; includeFontPadding = false }
+        tvSpeed = TextView(this).apply { text = "0"; textSize = 26f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; includeFontPadding = false }
         speedCard.addView(tvSpeed)
-        speedCard.addView(TextView(this).apply { text = "mph"; textSize = 12f; setTextColor(BAR_LIGHT); gravity = Gravity.CENTER })
-        bar.addView(speedCard, LinearLayout.LayoutParams(dp(56), WRAP))
-        bar.addView(View(this).apply { setBackgroundColor(0x2EFFFFFF) }, LinearLayout.LayoutParams(dp(1), dp(40)).apply { leftMargin = dp(12); rightMargin = dp(14) })
+        speedCard.addView(TextView(this).apply { text = "mph"; textSize = 11f; setTextColor(BAR_LIGHT); gravity = Gravity.CENTER })
+        bar.addView(speedCard, LinearLayout.LayoutParams(dp(50), WRAP))
+        bar.addView(View(this).apply { setBackgroundColor(0x2EFFFFFF) }, LinearLayout.LayoutParams(dp(1), dp(34)).apply { leftMargin = dp(10); rightMargin = dp(12) })
         // charge ring with the % inside
         val ringBox = FrameLayout(this)
         battRing = RingView(this)
         ringBox.addView(battRing, FrameLayout.LayoutParams(MATCH, MATCH))
-        tvBatt = TextView(this).apply { text = "–"; textSize = 14f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        tvBatt = TextView(this).apply { text = "–"; textSize = 13f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
         ringBox.addView(tvBatt, FrameLayout.LayoutParams(MATCH, MATCH))
-        bar.addView(ringBox, LinearLayout.LayoutParams(dp(52), dp(52)).apply { rightMargin = dp(12) })
+        bar.addView(ringBox, LinearLayout.LayoutParams(dp(46), dp(46)).apply { rightMargin = dp(10) })
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        tvVolts = TextView(this).apply { text = "No bike"; textSize = 18f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD) }
-        tvRange = TextView(this).apply { text = ""; textSize = 12f; setTextColor(BAR_LIGHT) }
+        tvVolts = TextView(this).apply { text = "No bike"; textSize = 16f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD) }
+        tvRange = TextView(this).apply { text = ""; textSize = 11.5f; setTextColor(BAR_LIGHT) }
         info.addView(tvVolts); info.addView(tvRange)
         bar.addView(info)
         battCard = bar
@@ -674,10 +674,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             translationX = -dp(8).toFloat(); translationY = -dp(12).toFloat()
         }
         val barBox = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
-        barBox.addView(bar, FrameLayout.LayoutParams(WRAP, dp(68)))
+        barBox.addView(bar, FrameLayout.LayoutParams(WRAP, dp(60)))   // same height as the gear button
         barBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.START })
 
-        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(14), dp(12), dp(8)) }
+        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(14), dp(12), dp(8)) }   // bar bottom = 14 + 8 = 22dp, level with the gear
         hudRow.addView(barBox)
 
         // live power block, top-left (under the search bar / turn banner)
@@ -2046,7 +2046,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
         fun setPct(f: Float?) { if (f != frac) { frac = f; invalidate() } }
         override fun onDraw(c: Canvas) {
-            val w = dp(6).toFloat(); track.strokeWidth = w; arc.strokeWidth = w
+            val w = dp(5).toFloat(); track.strokeWidth = w; arc.strokeWidth = w
             val r = RectF(w / 2 + 1, w / 2 + 1, width - w / 2 - 1, height - w / 2 - 1)
             c.drawOval(r, track)
             val f = frac ?: return
