@@ -206,6 +206,71 @@ object Router {
         } catch (e: Exception) { emptyList() }
     }
 
+    // ===================== "cinema", "pubs", "pharmacy"… : everything of a kind in an area =====================
+    data class Category(val label: String, val one: String, val filters: List<String>, val icon: String)
+
+    private val CATS: List<Pair<List<String>, Category>> = listOf(
+        listOf("cinema", "cinemas", "movies", "films") to Category("Cinemas", "Cinema", listOf("[amenity=cinema]"), "movie"),
+        listOf("pub", "pubs") to Category("Pubs", "Pub", listOf("[amenity=pub]"), "bar"),
+        listOf("bar", "bars") to Category("Bars", "Bar", listOf("[amenity=bar]"), "bar"),
+        listOf("cafe", "cafes", "cafés", "café", "coffee", "coffee shop", "coffee shops") to Category("Cafés", "Café", listOf("[amenity=cafe]"), "cafe"),
+        listOf("restaurant", "restaurants", "food", "places to eat") to Category("Restaurants", "Restaurant", listOf("[amenity=restaurant]"), "restaurant"),
+        listOf("takeaway", "takeaways", "fast food") to Category("Takeaways", "Takeaway", listOf("[amenity=fast_food]"), "restaurant"),
+        listOf("supermarket", "supermarkets", "groceries", "grocery", "shop", "shops") to Category("Supermarkets", "Supermarket", listOf("[shop=supermarket]", "[shop=convenience]"), "cart"),
+        listOf("pharmacy", "pharmacies", "chemist", "chemists") to Category("Pharmacies", "Pharmacy", listOf("[amenity=pharmacy]", "[shop=chemist]"), "pharmacy"),
+        listOf("petrol", "petrol station", "petrol stations", "fuel", "gas station") to Category("Petrol stations", "Petrol station", listOf("[amenity=fuel]"), "charging"),
+        listOf("charging", "charging station", "charging stations", "charger", "chargers", "ev charging") to Category("Charging points", "Charging point", listOf("[amenity=charging_station]"), "charging"),
+        listOf("bike shop", "bike shops", "bicycle shop", "bicycle shops", "bike repair") to Category("Bike shops", "Bike shop", listOf("[shop=bicycle]"), "bike"),
+        listOf("bike parking", "bicycle parking", "cycle parking") to Category("Bike parking", "Bike parking", listOf("[amenity=bicycle_parking]"), "parking"),
+        listOf("parking", "car park", "car parks") to Category("Car parks", "Car park", listOf("[amenity=parking]"), "parking"),
+        listOf("atm", "atms", "cash machine", "cash machines", "cashpoint") to Category("Cash machines", "Cash machine", listOf("[amenity=atm]"), "bank"),
+        listOf("bank", "banks") to Category("Banks", "Bank", listOf("[amenity=bank]"), "bank"),
+        listOf("hospital", "hospitals", "a&e") to Category("Hospitals", "Hospital", listOf("[amenity=hospital]"), "hospital"),
+        listOf("doctor", "doctors", "gp", "surgery") to Category("Doctors", "Doctors", listOf("[amenity=doctors]"), "hospital"),
+        listOf("dentist", "dentists") to Category("Dentists", "Dentist", listOf("[amenity=dentist]"), "hospital"),
+        listOf("gym", "gyms", "fitness") to Category("Gyms", "Gym", listOf("[leisure=fitness_centre]"), "place"),
+        listOf("park", "parks") to Category("Parks", "Park", listOf("[leisure=park]"), "park"),
+        listOf("hotel", "hotels") to Category("Hotels", "Hotel", listOf("[tourism=hotel]"), "hotel"),
+        listOf("library", "libraries") to Category("Libraries", "Library", listOf("[amenity=library]"), "school"),
+        listOf("post office", "post offices") to Category("Post offices", "Post office", listOf("[amenity=post_office]"), "place"),
+        listOf("toilet", "toilets") to Category("Toilets", "Toilets", listOf("[amenity=toilets]"), "place"),
+        listOf("bakery", "bakeries") to Category("Bakeries", "Bakery", listOf("[shop=bakery]"), "cart"),
+        listOf("barber", "barbers", "hairdresser", "hairdressers") to Category("Hairdressers", "Hairdresser", listOf("[shop=hairdresser]"), "place"),
+        listOf("museum", "museums") to Category("Museums", "Museum", listOf("[tourism=museum]"), "place"),
+        listOf("theatre", "theatres", "theater") to Category("Theatres", "Theatre", listOf("[amenity=theatre]"), "movie"),
+        listOf("school", "schools") to Category("Schools", "School", listOf("[amenity=school]"), "school"),
+        listOf("ice cream") to Category("Ice cream", "Ice cream", listOf("[amenity=ice_cream]"), "cafe"),
+    )
+
+    /** "cinema", "cinemas near me", "pubs nearby" → that kind of place; a shop name → null. */
+    fun categoryFor(q: String): Category? {
+        val t = q.lowercase().trim().replace(Regex("\\s+(near me|nearby|near by|around me|around here|in this area)$"), "").trim()
+        return CATS.firstOrNull { (keys, _) -> t in keys }?.second
+    }
+
+    /** Every place of [c] inside the box (south, west, north, east), nearest the middle first. */
+    fun searchArea(c: Category, s: Double, w: Double, n: Double, e: Double): List<Place>? {
+        return try {
+            val bb = "$s,$w,$n,$e"
+            val q = "[out:json][timeout:20];(" + c.filters.joinToString("") { "nwr$it($bb);" } + ");out center tags 120;"
+            val els = JSONObject(overpass(q, 8000, 25000)).getJSONArray("elements")
+            val out = ArrayList<Place>()
+            for (i in 0 until els.length()) {
+                val el = els.getJSONObject(i); val t = el.optJSONObject("tags") ?: continue
+                val lat = if (el.has("lat")) el.getDouble("lat") else el.optJSONObject("center")?.optDouble("lat") ?: continue
+                val lon = if (el.has("lon")) el.getDouble("lon") else el.optJSONObject("center")?.optDouble("lon") ?: continue
+                val name = t.optString("name").ifEmpty { t.optString("brand") }.ifEmpty { c.one }
+                val street = listOf(t.optString("addr:housenumber"), t.optString("addr:street")).filter { it.isNotEmpty() }.joinToString(" ")
+                val sub = listOf(street, t.optString("addr:suburb").ifEmpty { t.optString("addr:city") }).filter { it.isNotEmpty() }.joinToString(", ")
+                val cat = listOf("amenity", "shop", "leisure", "tourism").map { t.optString(it) }.firstOrNull { it.isNotEmpty() } ?: ""
+                out += Place(if (sub.isEmpty()) name else "$name, $sub", lat, lon, name, sub.ifEmpty { c.one }, cat)
+            }
+            val mLat = (s + n) / 2; val mLon = (w + e) / 2
+            // unnamed ones (car parks, toilets) after the named ones
+            out.sortedWith(compareBy<Place>({ it.label == c.one }, { Geo.dist(mLat, mLon, it.lat, it.lon) }))
+        } catch (ex: Exception) { null }
+    }
+
     // ===================== smart search =====================
     private val ALIASES = mapOf(
         "coop" to "co-op", "co op" to "co-op", "tescos" to "tesco", "sainsburys" to "sainsbury's",

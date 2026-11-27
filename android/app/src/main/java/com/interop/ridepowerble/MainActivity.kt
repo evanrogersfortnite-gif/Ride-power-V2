@@ -102,6 +102,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private var srcSel: GeoJsonSource? = null
     private var srcMe: GeoJsonSource? = null
     private var srcDest: GeoJsonSource? = null
+    // "cinema" etc: every result as a pin, and "Search this area" after you move the map
+    private var srcFound: GeoJsonSource? = null
+    private var foundCat: Router.Category? = null
+    private var foundPlaces: List<Router.Place> = emptyList()
+    private var foundCam: LatLng? = null; private var foundZoom = 0.0; private var foundFitting = false
+    private lateinit var searchAreaBtn: TextView
 
     private lateinit var estimator: BatteryEstimator
     private lateinit var learner: TripLearner
@@ -256,14 +262,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         m.addOnCameraMoveStartedListener { reason ->
             if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                 follow = false; lastGestureAt = System.currentTimeMillis()
+                if (foundCat != null && mode == Mode.BROWSE && resultsCard.visibility == View.VISIBLE) hideResults()   // see the pins
                 if (mode == Mode.NAV) recenterPill.visibility = View.VISIBLE
             }
         }
         m.addOnCameraMoveListener { updateCompass(); positionBubbles() }
-        m.addOnCameraIdleListener { positionBubbles(); loadPois() }
+        m.addOnCameraIdleListener { positionBubbles(); loadPois(); checkSearchArea() }
         m.addOnMapClickListener { ll ->
             if (mode == Mode.BROWSE || mode == Mode.PLACE) {
                 hideResults(); hideKeyboard()
+                foundAt(ll)?.let { selectPlace(it); return@addOnMapClickListener true }
                 val hit = poiAt(ll) ?: basemapPoiAt(ll)
                 if (hit != null) {
                     selectPlace(Router.Place(hit.name, hit.lat, hit.lon, hit.name, hit.sub, hit.cat))
@@ -295,10 +303,20 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st.addLayer(LineLayer("route-alt-l", "route-alt").withProperties(PropertyFactory.lineColor("#BCCBDF"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 3.5f), Expression.stop(15f, 6f), Expression.stop(17f, 9f), Expression.stop(19f, 16f))), *rnd))
         st.addLayer(LineLayer("route-sel-casing", "route-sel").withProperties(PropertyFactory.lineColor("#1A47C9"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 6f), Expression.stop(15f, 9.5f), Expression.stop(17f, 14f), Expression.stop(19f, 24f))), *rnd))
         st.addLayer(LineLayer("route-sel-l", "route-sel").withProperties(PropertyFactory.lineColor("#4285F4"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 4f), Expression.stop(15f, 6.5f), Expression.stop(17f, 10f), Expression.stop(19f, 18f))), *rnd))
+        srcFound = GeoJsonSource("found").also { it.setGeoJson(empty); st.addSource(it) }
         st.addImage("dest-pin", makeDestPin())
         st.addLayer(SymbolLayer("dest-l", "dest").withProperties(
             PropertyFactory.iconImage("dest-pin"), PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
             PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true)))
+        st.addLayerBelow(SymbolLayer("found-l", "found").withProperties(
+            PropertyFactory.iconImage(Expression.get("icon")), PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.textField(Expression.get("name")), PropertyFactory.textFont(arrayOf("Noto Sans Bold")),
+            PropertyFactory.textSize(12.5f), PropertyFactory.textColor("#B3261E"),
+            PropertyFactory.textHaloColor(if (appliedStyle.endsWith("dark")) "#1F1F1F" else "#FFFFFF"), PropertyFactory.textHaloWidth(1.6f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(1.0f, -1.0f)),
+            PropertyFactory.textMaxWidth(8f), PropertyFactory.textOptional(true)), "dest-l")
+        foundCat?.let { c -> st.addImage("found-${c.icon}", makeBadge(0xFFEA4335.toInt(), c.icon, 26f, true)); srcFound?.setGeoJson(foundJson()) }
         // Google-style faint blue cone showing which way the phone is facing
         st.addImage("me-beam-img", makeBeam())
         st.addLayer(SymbolLayer("me-beam", "me").withProperties(
@@ -548,7 +566,12 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             setPadding(dp(12), dp(14), dp(4), dp(14))
             setOnEditorActionListener { _, id, _ ->
-                if (id == EditorInfo.IME_ACTION_SEARCH) { val q = text.toString().trim(); if (q.isNotEmpty()) runSuggest(q, true); true } else false
+                if (id == EditorInfo.IME_ACTION_SEARCH) {
+                    val q = text.toString().trim()
+                    val c = Router.categoryFor(q)
+                    if (c != null) areaSearch(c, true) else if (q.isNotEmpty()) runSuggest(q, true)
+                    true
+                } else false
             }
             setOnFocusChangeListener { _, has -> if (has && text.isEmpty() && mode == Mode.BROWSE) showRecent() }
             addTextChangedListener(object : TextWatcher {
@@ -582,6 +605,14 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         frame.addView(topBox, FrameLayout.LayoutParams(MATCH, WRAP).apply {
             gravity = Gravity.TOP; setMargins(dp(12), sbH + dp(8), dp(12), 0)
         })
+        searchAreaBtn = TextView(this).apply {
+            iconText("@search  Search this area", BLUE, 18); gravity = Gravity.CENTER_VERTICAL
+            textSize = 15f; setTextColor(BLUE); setTypeface(null, Typeface.BOLD)
+            setPadding(dp(16), dp(10), dp(18), dp(10)); background = shape(Color.WHITE, dp(22)); elevation = dp(6).toFloat()
+            visibility = View.GONE
+            setOnClickListener { foundCat?.let { areaSearch(it, false) } }
+        }
+        frame.addView(searchAreaBtn, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL })
     }
 
     private fun buildRouteCard(frame: FrameLayout) {
@@ -789,6 +820,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val prev = mode
         mode = m
         if (prev == Mode.NAV && m != Mode.NAV) leaveNavCamera()
+        if (m == Mode.NAV) clearFound()
         applyMode()
         when (m) {
             Mode.PLACE -> { fillPlaceSheet(); dest?.let { flyTo(it) } }
@@ -810,6 +842,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(myLocBtn, mode == Mode.BROWSE)
         vis(gearBtn, mode == Mode.BROWSE)
         vis(trafficBtn, mode != Mode.ARRIVED)
+        if (mode != Mode.BROWSE) searchAreaBtn.visibility = View.GONE
+        map?.style?.getLayer("found-l")?.setProperties(PropertyFactory.visibility(
+            if (mode == Mode.BROWSE || mode == Mode.PLACE) Property.VISIBLE else Property.NONE))
         vis(turnBanner, mode == Mode.NAV)
         vis(navBottom, mode == Mode.NAV)
         vis(recenterPill, mode == Mode.NAV && !follow)
@@ -869,11 +904,14 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         redrawRoutes(); srcDest?.setGeoJson(fc(emptyList()))
         setSearchText(""); hideResults()
         setMode(Mode.BROWSE)
+        // came from a "cinema" search: back to the list of them, like Google
+        foundCat?.let { c -> setSearchText(c.label); showPlaces(foundPlaces, nearPt(), "", "${c.label} in this area · ${foundPlaces.size}", true) }
     }
 
     // ============================ search ============================
     private fun onQueryChanged(q: String) {
         clearBtn.visibility = if (q.isEmpty()) View.GONE else View.VISIBLE
+        if (foundCat != null) clearFound()      // typing something new replaces the pins
         ui.removeCallbacksAndMessages("search")
         val t = q.trim()
         if (t.isEmpty()) { searchSeq++; showRecent(); return }
@@ -921,6 +959,103 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 else showPlaces(deep, near, q, null, true)
             }
         }
+    }
+
+    // ============================ "cinema": all of them in this area ============================
+    private fun areaSearch(c: Router.Category, fit: Boolean) {
+        val m = map ?: return
+        hideKeyboard(); setSearchText(c.label); searchAreaBtn.visibility = View.GONE
+        val seq = ++searchSeq
+        showResultsMessage("Finding ${c.label.lowercase()}…")
+        val b = m.projection.visibleRegion.latLngBounds
+        val cLat = (b.latitudeNorth + b.latitudeSouth) / 2; val cLon = (b.longitudeEast + b.longitudeWest) / 2
+        // never more than ~15 km across (zoomed far out would ask for thousands)
+        val hLat = minOf((b.latitudeNorth - b.latitudeSouth) / 2, 0.07); val hLon = minOf((b.longitudeEast - b.longitudeWest) / 2, 0.11)
+        searchExec.execute {
+            var list = Router.searchArea(c, cLat - hLat, cLon - hLon, cLat + hLat, cLon + hLon)
+            if (list != null && list.isEmpty() && fit)      // none on screen: look a bit wider
+                list = Router.searchArea(c, cLat - hLat * 3, cLon - hLon * 3, cLat + hLat * 3, cLon + hLon * 3)
+            runOnUiThread {
+                if (seq != searchSeq) return@runOnUiThread
+                when {
+                    list == null -> showResultsMessage("Search is busy right now — try again in a moment")
+                    list.isEmpty() -> {
+                        showFound(c, emptyList(), false)
+                        showResultsMessage("No ${c.label.lowercase()} here — move or zoom out the map, then Search this area")
+                    }
+                    else -> showFound(c, list, fit)
+                }
+            }
+        }
+    }
+
+    private fun showFound(c: Router.Category, list: List<Router.Place>, fit: Boolean) {
+        val m = map ?: return
+        foundCat = c; foundPlaces = list
+        m.style?.addImage("found-${c.icon}", makeBadge(0xFFEA4335.toInt(), c.icon, 26f, true))
+        srcFound?.setGeoJson(foundJson())
+        if (list.isEmpty()) { foundCam = m.cameraPosition.target; foundZoom = m.cameraPosition.zoom; return }
+        showPlaces(list, nearPt(), "", "${c.label} in this area · ${list.size}", true)
+        if (fit) {
+            // frame the nearest ones (the rest are still pinned)
+            val near = nearPt()
+            val pick = if (near != null) list.sortedBy { Geo.dist(near.lat, near.lon, it.lat, it.lon) }.take(12) else list.take(12)
+            if (pick.size == 1) m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(pick[0].lat, pick[0].lon), 15.0))
+            else {
+                val bb = LatLngBounds.Builder(); pick.forEach { bb.include(LatLng(it.lat, it.lon) ) }
+                near?.let { bb.include(LatLng(it.lat, it.lon)) }
+                try { m.animateCamera(CameraUpdateFactory.newLatLngBounds(bb.build(), dp(50), topBox.bottom + dp(40), dp(50), dp(120))) } catch (_: Exception) {}
+            }
+            foundFitting = true
+        } else { foundCam = m.cameraPosition.target; foundZoom = m.cameraPosition.zoom }
+    }
+
+    private fun foundJson(): String {
+        val c = foundCat ?: return fc(emptyList())
+        val fs = JSONArray()
+        for (p in foundPlaces) fs.put(JSONObject().put("type", "Feature")
+            .put("geometry", JSONObject().put("type", "Point").put("coordinates", JSONArray().put(p.lon).put(p.lat)))
+            .put("properties", JSONObject().put("name", if (p.title == c.one) "" else p.title).put("icon", "found-${c.icon}")))
+        return JSONObject().put("type", "FeatureCollection").put("features", fs).toString()
+    }
+
+    private fun clearFound() {
+        foundCat = null; foundPlaces = emptyList(); foundCam = null
+        srcFound?.setGeoJson(fc(emptyList()))
+        if (::searchAreaBtn.isInitialized) searchAreaBtn.visibility = View.GONE
+    }
+
+    /** Red pin under the finger, if any. */
+    private fun foundAt(ll: LatLng): Router.Place? {
+        val m = map ?: return null
+        if (foundPlaces.isEmpty()) return null
+        val tap = m.projection.toScreenLocation(ll)
+        var best: Router.Place? = null; var bestD = dp(30).toFloat()
+        for (p in foundPlaces) {
+            val pt = m.projection.toScreenLocation(LatLng(p.lat, p.lon))
+            val d = Math.hypot((pt.x - tap.x).toDouble(), (pt.y - tap.y - dp(14)).toDouble()).toFloat()   // pin's head sits above the point
+            if (d < bestD) { bestD = d; best = p }
+        }
+        return best
+    }
+
+    /** After you pan/zoom away from the results, offer "Search this area". */
+    private fun checkSearchArea() {
+        val m = map ?: return
+        if (foundCat == null || !::searchAreaBtn.isInitialized) return
+        val cp = m.cameraPosition; val t = cp.target ?: return
+        if (foundFitting) { foundFitting = false; foundCam = t; foundZoom = cp.zoom; return }
+        val f = foundCam ?: run { foundCam = t; foundZoom = cp.zoom; return }
+        val b = m.projection.visibleRegion.latLngBounds
+        val moved = abs(t.latitude - f.latitude) > (b.latitudeNorth - b.latitudeSouth) * 0.25 ||
+                abs(t.longitude - f.longitude) > (b.longitudeEast - b.longitudeWest) * 0.25 || abs(cp.zoom - foundZoom) > 0.8
+        val show = moved && mode == Mode.BROWSE
+        if (show) {
+            val lp = searchAreaBtn.layoutParams as FrameLayout.LayoutParams
+            val want = (topBox.layoutParams as FrameLayout.LayoutParams).topMargin + topBox.height + dp(10)
+            if (lp.topMargin != want) { lp.topMargin = want; searchAreaBtn.layoutParams = lp }
+        }
+        searchAreaBtn.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     /** Your stores on top, without the same shop appearing again lower down. */
@@ -974,6 +1109,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun categorySearch(label: String, q: String) {
+        Router.categoryFor(q)?.let { areaSearch(it, true); return }
         setSearchText(label); hideKeyboard()
         val seq = ++searchSeq
         val near = nearPt()
@@ -995,6 +1131,19 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
         resultsCard.removeAllViews()
         if (header != null) resultsCard.addView(sectionLabel(header))
+        // typed a kind of place ("cinema"): offer all of them on the map, like Google
+        val cat = if (header == null && query.isNotEmpty()) Router.categoryFor(query) else null
+        if (cat != null) {
+            resultsCard.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(11), dp(16), dp(11))
+                setOnClickListener { areaSearch(cat, true) }
+                addView(View(this@MainActivity).apply { background = iconBg(SOFTBLUE, 19, "search", BLUE, 38, 20) },
+                    LinearLayout.LayoutParams(dp(38), dp(38)).apply { rightMargin = dp(12) })
+                addView(TextView(this@MainActivity).apply {
+                    text = "${cat.label} near you"; textSize = 16f; setTextColor(BLUE); setTypeface(null, Typeface.BOLD) })
+            })
+            resultsCard.addView(divider())
+        }
         val sorted = if (near != null && query.isEmpty()) places.sortedBy { Geo.dist(near.lat, near.lon, it.lat, it.lon) } else places
         val list = localFirst(sorted, near)
         list.take(7).forEachIndexed { i, p ->
@@ -1064,6 +1213,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun clearSearch() {
+        clearFound()
         setSearchText(""); searchSeq++
         if (mode == Mode.PLACE) closeAll() else showRecent()
         searchBar.requestFocus(); showKeyboard()
