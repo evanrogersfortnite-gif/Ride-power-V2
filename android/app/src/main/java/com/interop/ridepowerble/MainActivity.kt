@@ -1898,6 +1898,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val now = System.currentTimeMillis()
             if (lastMoveAt > 0 && now - lastMoveAt < 5000) { rideMovingSecs += (now - lastMoveAt) / 1000.0; rideMiles += loc.speed * (now - lastMoveAt) / 1000.0 / 1609.34 }
             lastMoveAt = now
+            // live: the ride average (one decimal) ticks as you go
+            if (rangeAuto() && BleManager.connected && lastPct >= 0) showBatt(lastPct, true)
         } else lastMoveAt = 0L
     }
     @Deprecated("Deprecated in Java") override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
@@ -2009,9 +2011,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     private var rideMovingSecs = 0.0; private var rideMiles = 0.0; private var lastMoveAt = 0L
 
-    /** Average speed for range: your average this ride (after 2 min of riding), else your learned average, else 15. */
+    /** Average speed for range: your average this ride (after 1 min of riding), else your learned average, else 15. */
     private fun autoMph(): Double = when {
-        rideMovingSecs > 120 -> rideMiles / (rideMovingSecs / 3600.0)
+        rideMovingSecs > 60 -> rideMiles / (rideMovingSecs / 3600.0)
         else -> range.learnedAvgMph ?: 15.0
     }.coerceIn(6.0, 35.0)
     private fun rangeAuto() = prefs().getInt("rangeMph", 0) == 0
@@ -2034,7 +2036,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         battRing.setPct((p / 100.0).toFloat())
         tvBatt.text = "${p.roundToInt()}"
         val mi = range.rangeAt(p, rangeMph())
-        tvRange.text = (if (rangeAuto()) "Avg" else "At") + " ${rangeMph().roundToInt()} mph = ${mi.roundToInt()} mi left"
+        tvRange.text = (if (rangeAuto()) "Avg %.1f mph".format(rangeMph()) else "At ${rangeMph().roundToInt()} mph") + " = ${mi.roundToInt()} mi left"
     }
 
     /** The battery charge ring: faint track + yellow-to-orange arc filling clockwise from the top. */
