@@ -453,7 +453,7 @@ object Router {
     private val OVERPASS = listOf("https://overpass-api.de/api/interpreter",
         "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter")
     @Volatile private var overpassFirst = 0
-    private fun overpass(q: String, connectMs: Int = 8000, readMs: Int = 20000): String {
+    internal fun overpass(q: String, connectMs: Int = 8000, readMs: Int = 20000): String {
         var last: Exception? = null
         for (i in OVERPASS.indices) {
             val idx = (overpassFirst + i) % OVERPASS.size

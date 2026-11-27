@@ -202,6 +202,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapLibre.getInstance(this)
+        searchExec.execute { MyStores.resolve(this) }    // your Co-op stores' locations, looked up once
         window.statusBarColor = Color.TRANSPARENT
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
                 View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
@@ -677,7 +678,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         barBox.addView(bar, FrameLayout.LayoutParams(WRAP, dp(60)))   // same height as the gear button
         barBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.START })
 
-        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(14), dp(12), dp(8)) }   // bar bottom = 14 + 8 = 22dp, level with the gear
+        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(dp(8), dp(14), dp(12), dp(8)) }   // bar bottom = 14 + 8 = 22dp, level with the gear
         hudRow.addView(barBox)
 
         // live power block, top-left (under the search bar / turn banner)
@@ -698,7 +699,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         hud.addView(hudRow)
         frame.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP).apply {
-            gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(14), 0, 0, dp(14))
+            gravity = Gravity.BOTTOM or Gravity.START; setMargins(dp(6), 0, 0, dp(14))   // + 8dp row padding = bar 14dp in; room for the limit sign
         })
         // status chips float independently just above the cards (so they can never disturb the cards)
         statusRow = LinearLayout(this).apply { visibility = View.GONE; isClickable = false }
@@ -897,10 +898,14 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }, 15000)
         // instant: shops already loaded / drawn on the map around you
         val local = localMatches(q)
-        if (local.isNotEmpty() && !enter) showPlaces(Router.rank(local, q, null, null, near), near, q, null, false)
+        val mineNow = MyStores.matches(this, q)
+        if ((local.isNotEmpty() || mineNow.isNotEmpty()) && !enter) showPlaces(withMine(mineNow, Router.rank(local, q, null, null, near)), near, q, null, false)
         searchExec.execute {
+            // your stores first ("gloucester road" → both Gloucester Road stores, with their area)
+            if (!MyStores.allResolved(this)) MyStores.resolve(this)
+            val mine = MyStores.matches(this, q)
             if (!enter) {
-                val quick = Router.smartSearch(q, near, false, alive, local)
+                val quick = withMine(mine, Router.smartSearch(q, near, false, alive, local))
                 if (!alive()) return@execute
                 runOnUiThread { if (seq == searchSeq) showPlaces(quick, near, q, null, !wantDeep) }
                 if (!wantDeep) return@execute
@@ -908,7 +913,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                 if (seq != searchSeq) return@execute
             }
             if (!alive()) return@execute
-            val deep = Router.smartSearch(q, near, true, alive, local)
+            val deep = withMine(mine, Router.smartSearch(q, near, true, alive, local))
             runOnUiThread {
                 if (seq != searchSeq) return@runOnUiThread
                 val best = localFirst(deep, near)
@@ -917,6 +922,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             }
         }
     }
+
+    /** Your stores on top, without the same shop appearing again lower down. */
+    private fun withMine(mine: List<Router.Place>, rest: List<Router.Place>): List<Router.Place> =
+        mine + rest.filter { r -> mine.none { Geo.dist(it.lat, it.lon, r.lat, r.lon) < 80 } }
 
     /** Places matching the query among what's already on the map (no network needed). */
     private fun localMatches(q: String): List<Router.Place> {
