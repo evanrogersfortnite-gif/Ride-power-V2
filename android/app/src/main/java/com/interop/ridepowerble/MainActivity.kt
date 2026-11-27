@@ -226,7 +226,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         routeProfile = prefs().getString("defProfile", "trekking") ?: "trekking"
         tts = TextToSpeech(this) { st ->
             ttsReady = st == TextToSpeech.SUCCESS
-            if (ttsReady) tts?.language = Locale.UK
+            if (ttsReady) tts?.let { Voices.apply(it, prefs().getString("voice", "default")) }
         }
 
         val frame = FrameLayout(this)
@@ -2282,20 +2282,46 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     /** The battery charge ring: faint track + yellow-to-orange arc filling clockwise from the top. */
+    /**
+     * Charge ring: green 100–65 %, orange 64–30 %, red under 30 %. When the band changes the colour
+     * fades slowly across (green → orange → red) instead of jumping.
+     */
     inner class RingView(ctx: Context) : View(ctx) {
         private var frac: Float? = null
+        private var color = GREEN_R
+        private var anim: android.animation.ValueAnimator? = null
         private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0x33FFFFFF; strokeCap = Paint.Cap.ROUND }
         private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
-        fun setPct(f: Float?) { if (f != frac) { frac = f; invalidate() } }
+        private fun bandColor(f: Float) = when { f >= 0.645f -> GREEN_R; f >= 0.295f -> ORANGE_R; else -> RED_R }
+        fun setPct(f: Float?) {
+            if (f == frac) return
+            val first = frac == null
+            frac = f
+            if (f != null) {
+                val want = bandColor(f)
+                if (first) { anim?.cancel(); color = want }
+                else if (want != color && anim?.isRunning != true) {
+                    anim = android.animation.ValueAnimator.ofObject(android.animation.ArgbEvaluator(), color, want).apply {
+                        duration = 2500
+                        addUpdateListener { color = it.animatedValue as Int; invalidate() }
+                        start()
+                    }
+                }
+            }
+            invalidate()
+        }
         override fun onDraw(c: Canvas) {
             val w = dp(5).toFloat(); track.strokeWidth = w; arc.strokeWidth = w
             val r = RectF(w / 2 + 1, w / 2 + 1, width - w / 2 - 1, height - w / 2 - 1)
             c.drawOval(r, track)
             val f = frac ?: return
-            arc.shader = LinearGradient(r.left, r.top, r.right, r.bottom, 0xFFFFD54F.toInt(), 0xFFF4511E.toInt(), Shader.TileMode.CLAMP)
+            // a touch lighter at the start of the arc so it still has some depth
+            val light = android.graphics.Color.argb(255, minOf(255, Color.red(color) + 45), minOf(255, Color.green(color) + 45), minOf(255, Color.blue(color) + 45))
+            arc.shader = LinearGradient(r.left, r.top, r.right, r.bottom, light, color, Shader.TileMode.CLAMP)
             c.drawArc(r, -90f, 360f * f.coerceIn(0.005f, 1f), false, arc)
         }
     }
+    private val GREEN_R = 0xFF34C759.toInt(); private val ORANGE_R = 0xFFFF9500.toInt(); private val RED_R = 0xFFFF3B30.toInt()
 
     private fun showBatteryDetails() {
         val pct = if (lastPct >= 0) "${lastPct.roundToInt()}%" else "unknown"
@@ -2451,6 +2477,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onStart() { super.onStart(); mapView.onStart() }
     override fun onResume() {
         super.onResume(); mapView.onResume(); BleManager.addListener(this); applySettings()
+        if (ttsReady) tts?.let { Voices.apply(it, prefs().getString("voice", "default")) }
         BleManager.pollMs = 700
         if (backgrounded) { backgrounded = false; startLocation() }
         startHeading()

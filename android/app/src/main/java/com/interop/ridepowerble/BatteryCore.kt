@@ -62,6 +62,13 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
 
     // ---- coulomb counting (current estimated from voltage sag ÷ learned pack resistance) ----
     var amps = 0.0; private set                        // estimated battery current now
+    private var thrOffSecs = 1e9
+    /**
+     * The battery never quite reaches the controller's rated current: the rider's display peaks at
+     * ~2,090 W at ~51 V on full-throttle pulls (≈ 41 A of a 45 A rating). Capping current (not watts)
+     * also means the peak falls naturally as the battery empties, like on the display.
+     */
+    private val PEAK_FRACTION = 0.92
     val watts get() = amps * lastV
     private var lastV = 0.0
     private var ahDisplay = 0.0                        // Ah since the shown % was last set from voltage
@@ -152,7 +159,13 @@ class BatteryCore(private val st: MutableMap<String, Double>) {
 
         // ---- current estimate: sag below the resting voltage for the current %, divided by resistance ----
         val ocvRef = if (series > 0 && soc >= 0) cellFromPct(soc) * series else 0.0
-        amps = if (ocvRef > 0 && (on || mph > 3)) ((ocvRef - v) / resistance).coerceIn(0.0, limitAmps) else 0.0
+        // Off the throttle (coasting, rolling downhill) the voltage is only recovering: that's not current.
+        // Only count it then if there's a real, sustained drop (e.g. pedal assist) 4 s after letting go.
+        val throttleOn = throttleV > idle + 0.15 || cruise
+        thrOffSecs = if (throttleOn) 0.0 else thrOffSecs + dt
+        val sag = ocvRef - v
+        amps = if (ocvRef > 0 && (throttleOn || (mph > 3 && thrOffSecs > 4 && sag > 1.2)))
+            (sag / resistance).coerceIn(0.0, limitAmps * PEAK_FRACTION) else 0.0
         // learn resistance: full throttle, accelerating from low speed = controller at its current limit
         // (only when we know this level's current limit)
         // Learn resistance from the PEAK voltage drop of each full-throttle pull. At low speed the controller

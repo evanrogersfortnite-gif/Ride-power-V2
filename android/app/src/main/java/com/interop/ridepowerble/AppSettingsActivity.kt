@@ -139,6 +139,8 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             val voice = !p.getBoolean("muted", false)
             switchRow("volume_up", "Voice guidance", "Spoken turn instructions", voice) { on -> p.edit().putBoolean("muted", !on).apply() }
             line()
+            row("volume_up", "Voice", Voices.of(p.getString("voice", "default")).label) { pickVoice() }
+            line()
             choiceStr("directions", "Preferred routes", "defProfile",
                 listOf("Quiet roads & cycle paths" to "trekking", "Faster roads" to "fastbike"), "trekking")
             line()
@@ -401,6 +403,26 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
                 }.setNegativeButton("Cancel", null).show()
         }
     }
+
+    // ---- voice: pick one and hear it straight away ----
+    private var previewTts: android.speech.tts.TextToSpeech? = null
+    private fun pickVoice() {
+        val cur = prefs().getString("voice", "default")
+        val opts = Voices.ALL
+        AlertDialog.Builder(this).setTitle("Voice")
+            .setSingleChoiceItems(opts.map { it.label }.toTypedArray(), opts.indexOfFirst { it.key == cur }) { d, i ->
+                prefs().edit().putString("voice", opts[i].key).apply(); d.dismiss(); build(); preview(opts[i].key)
+            }.setNegativeButton("Cancel", null).show()
+    }
+    private fun preview(key: String) {
+        val say = { t: android.speech.tts.TextToSpeech ->
+            Voices.apply(t, key)?.let { toast(it) }
+            t.speak("In 200 yards, turn left onto Gloucester Road", android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "preview")
+        }
+        previewTts?.let { say(it); return }
+        previewTts = android.speech.tts.TextToSpeech(this) { st -> if (st == android.speech.tts.TextToSpeech.SUCCESS) previewTts?.let(say) }
+    }
+    override fun onDestroy() { previewTts?.shutdown(); super.onDestroy() }
 
     private fun confirm(title: String, msg: String, btn: String = "Reset", ok: () -> Unit) {
         AlertDialog.Builder(this).setTitle(title).setMessage(msg)
