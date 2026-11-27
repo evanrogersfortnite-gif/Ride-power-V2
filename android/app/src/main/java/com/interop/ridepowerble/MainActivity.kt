@@ -11,6 +11,9 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.graphics.RectF
+import android.graphics.LinearGradient
+import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationListener
@@ -172,7 +175,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private var wasCruise = false; private var wasReverse = false; private var lastFault = 0
     private var steadyRef = 0.0; private var steadySecs = 0.0; private var cruiseTipShown = false
     private lateinit var battCard: LinearLayout
-    private lateinit var battFill: View
+    private lateinit var battRing: RingView
+    private val NAVY_TOP = 0xFF1E4277.toInt(); private val NAVY_BOTTOM = 0xFF0A1D3A.toInt(); private val BAR_LIGHT = 0xFFAFC3E0.toInt()
     private lateinit var tvRange: TextView
     private lateinit var tvVolts: TextView
     private lateinit var wattCard: TextView
@@ -641,45 +645,45 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     private fun buildSpeed(frame: FrameLayout) {
-        // speed and battery: two equal square blocks, bottom-left
-        speedCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat()
+        // one navy bar, bottom-left: speed | charge ring | voltage + range (matches the app icon)
+        val bar = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(8), dp(22), dp(8))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(NAVY_TOP, NAVY_BOTTOM)).apply { cornerRadius = dp(34).toFloat() }
+            elevation = dp(6).toFloat(); isClickable = true
+            setOnClickListener { showBatteryDetails() }
         }
-        tvSpeed = TextView(this).apply { text = "0"; textSize = 30f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        speedCard = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        tvSpeed = TextView(this).apply { text = "0"; textSize = 30f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; includeFontPadding = false }
         speedCard.addView(tvSpeed)
-        speedCard.addView(TextView(this).apply { text = "mph"; textSize = 12f; setTextColor(MUTED); gravity = Gravity.CENTER })
-        // road speed-limit sign sits on the block's top-right corner (like Google)
+        speedCard.addView(TextView(this).apply { text = "mph"; textSize = 12f; setTextColor(BAR_LIGHT); gravity = Gravity.CENTER })
+        bar.addView(speedCard, LinearLayout.LayoutParams(dp(56), WRAP))
+        bar.addView(View(this).apply { setBackgroundColor(0x2EFFFFFF) }, LinearLayout.LayoutParams(dp(1), dp(40)).apply { leftMargin = dp(12); rightMargin = dp(14) })
+        // charge ring with the % inside
+        val ringBox = FrameLayout(this)
+        battRing = RingView(this)
+        ringBox.addView(battRing, FrameLayout.LayoutParams(MATCH, MATCH))
+        tvBatt = TextView(this).apply { text = "–"; textSize = 14f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
+        ringBox.addView(tvBatt, FrameLayout.LayoutParams(MATCH, MATCH))
+        bar.addView(ringBox, LinearLayout.LayoutParams(dp(52), dp(52)).apply { rightMargin = dp(12) })
+        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        tvVolts = TextView(this).apply { text = "No bike"; textSize = 18f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD) }
+        tvRange = TextView(this).apply { text = ""; textSize = 12f; setTextColor(BAR_LIGHT) }
+        info.addView(tvVolts); info.addView(tvRange)
+        bar.addView(info)
+        battCard = bar
+        // road speed-limit sign sits on the bar's top-right corner (like Google)
         tvLimit = TextView(this).apply {
             textSize = 13f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(3), RED) }
-            elevation = dp(6).toFloat(); visibility = View.GONE
-            translationX = dp(10).toFloat(); translationY = -dp(10).toFloat()
+            elevation = dp(8).toFloat(); visibility = View.GONE
+            translationX = dp(8).toFloat(); translationY = -dp(12).toFloat()
         }
-        val speedBox = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
-        speedBox.addView(speedCard, FrameLayout.LayoutParams(dp(HUD), dp(HUD)))
-        speedBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.END })
+        val barBox = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        barBox.addView(bar, FrameLayout.LayoutParams(WRAP, dp(68)))
+        barBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.END })
 
-        battCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat()
-            setOnClickListener { showBatteryDetails() }
-        }
-        tvBatt = TextView(this).apply { text = "–%"; textSize = 22f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER }
-        battCard.addView(tvBatt)
-        // live battery voltage right under the %
-        tvVolts = TextView(this).apply { text = "– V"; textSize = 12f; setTextColor(INK); gravity = Gravity.CENTER }
-        battCard.addView(tvVolts)
-        val track = FrameLayout(this).apply { background = shape(0xFFE8EAED.toInt(), dp(3)) }
-        battFill = View(this).apply { background = shape(MUTED, dp(3)) }
-        track.addView(battFill, FrameLayout.LayoutParams(0, MATCH))
-        battCard.addView(track, LinearLayout.LayoutParams(dp(BAR_W), dp(5)).apply { topMargin = dp(3); bottomMargin = dp(3) })
-        tvRange = TextView(this).apply { text = "– mi"; textSize = 11f; setTextColor(MUTED); gravity = Gravity.CENTER }
-        battCard.addView(tvRange)
-
-        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(12), dp(12), dp(8)) }
-        hudRow.addView(speedBox)
-        hudRow.addView(battCard, LinearLayout.LayoutParams(dp(HUD), dp(HUD)).apply { leftMargin = dp(12) })
+        val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(14), dp(12), dp(8)) }
+        hudRow.addView(barBox)
 
         // live power block, top-left (under the search bar / turn banner)
         // live power + temperatures, top-left (under the search bar / turn banner)
@@ -1727,7 +1731,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val mph = if (loc.hasSpeed()) (loc.speed * 2.2369363).roundToInt() else 0
         tvSpeed.text = mph.toString()
         val lim = limitMph
-        tvSpeed.setTextColor(if (lim != null && mph > lim + 1) RED else INK)
+        tvSpeed.setTextColor(if (lim != null && mph > lim + 1) 0xFFFF6E6E.toInt() else Color.WHITE)
         if (lim != null && mph > lim + 2 && prefs().getBoolean("speedAlert", true)) {
             val now = System.currentTimeMillis()
             if (lim != speedAlertLim || now - speedAlertAt > 90_000) {
@@ -1804,6 +1808,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph, d.ctrlTemp, d.motorTemp, estimator.watts)
         if (d.batteryV > 5) {
             tvVolts.text = "%.1f V".format(d.batteryV)
+            if (lastPct < 0) showBatt(-1.0, true)
             val w = estimator.watts
             wattCard.text = if (w >= 10) "${(w / 10).roundToInt() * 10} W" else "0 W"
             positionWattCard()
@@ -1876,7 +1881,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
         if (!backgrounded) tuneGps()
         if (!connected) { statusRow.removeAllViews(); shownChips = emptyList(); statusRow.visibility = View.GONE }
-        if (!connected) { tvVolts.text = "– V"; wattCard.text = "– W"; tempText.text = "Motor –° · Ctrl –°"; tempText.setTextColor(MUTED) }
+        if (!connected) { wattCard.text = "– W"; showBatt(lastPct, false) }
         if (!connected) showBatt(lastPct, false)
     }
 
@@ -1892,20 +1897,38 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     /** Battery block: big %, red→green live bar, and miles left at your chosen average speed. */
     private fun showBatt(pct: Double, live: Boolean) {
-        if (pct < 0) {
-            tvBatt.text = "–%"; tvBatt.setTextColor(MUTED); tvRange.text = "no bike"
-            (battFill.layoutParams as FrameLayout.LayoutParams).width = 0; battFill.requestLayout(); return
+        val connected = BleManager.connected
+        if (connected && pct < 0) {            // connected, waiting for the first settled reading
+            battRing.setPct(null); tvBatt.text = "–"; tvRange.text = "Reading battery…"; return
+        }
+        if (!connected || pct < 0) {
+            battRing.setPct(null)
+            tvBatt.text = "–"
+            tvVolts.text = "No bike"
+            tvRange.text = if (pct >= 0) "Last seen ${pct.roundToInt()}%" else "Connect to see battery"
+            return
         }
         val p = pct.coerceIn(0.0, 100.0)
-        val hue = (p / 100.0 * 120.0).toFloat()                  // 0 = red, 60 = amber, 120 = green
-        val col = Color.HSVToColor(floatArrayOf(hue, 0.85f, if (live) 0.80f else 0.55f))
-        tvBatt.text = "${p.roundToInt()}%"
-        tvBatt.setTextColor(if (live) INK else MUTED)
-        battFill.background = shape(col, dp(3))
-        (battFill.layoutParams as FrameLayout.LayoutParams).width = (dp(BAR_W) * p / 100.0).roundToInt().coerceAtLeast(dp(3))
-        battFill.requestLayout()
+        battRing.setPct((p / 100.0).toFloat())
+        tvBatt.text = "${p.roundToInt()}"
         val mi = range.rangeAt(p, rangeMph())
-        tvRange.text = "≈${mi.roundToInt()} mi @${rangeMph().roundToInt()}" + if (rangeAuto()) " avg" else ""
+        tvRange.text = (if (rangeAuto()) "Avg" else "At") + " ${rangeMph().roundToInt()} mph = ${mi.roundToInt()} mi left"
+    }
+
+    /** The battery charge ring: faint track + yellow-to-orange arc filling clockwise from the top. */
+    inner class RingView(ctx: Context) : View(ctx) {
+        private var frac: Float? = null
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0x33FFFFFF; strokeCap = Paint.Cap.ROUND }
+        private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+        fun setPct(f: Float?) { if (f != frac) { frac = f; invalidate() } }
+        override fun onDraw(c: Canvas) {
+            val w = dp(6).toFloat(); track.strokeWidth = w; arc.strokeWidth = w
+            val r = RectF(w / 2 + 1, w / 2 + 1, width - w / 2 - 1, height - w / 2 - 1)
+            c.drawOval(r, track)
+            val f = frac ?: return
+            arc.shader = LinearGradient(r.left, r.top, r.right, r.bottom, 0xFFFFD54F.toInt(), 0xFFF4511E.toInt(), Shader.TileMode.CLAMP)
+            c.drawArc(r, -90f, 360f * f.coerceIn(0.005f, 1f), false, arc)
+        }
     }
 
     private fun showBatteryDetails() {
