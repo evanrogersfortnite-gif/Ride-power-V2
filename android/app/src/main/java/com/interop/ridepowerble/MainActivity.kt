@@ -817,7 +817,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         vis(turnBanner, mode == Mode.NAV)
         vis(navBottom, mode == Mode.NAV)
         vis(recenterPill, mode == Mode.NAV && !follow)
-        if (mode != Mode.BROWSE && mode != Mode.PLACE) resultsCard.visibility = View.GONE
+        if (mode != Mode.BROWSE && mode != Mode.PLACE) { resultsCard.visibility = View.GONE; trafficBtn.visibility = View.VISIBLE }
         (hud.layoutParams as FrameLayout.LayoutParams).bottomMargin = if (mode == Mode.NAV) dp(116) else dp(14)
         hud.requestLayout()
         setNavLayers(mode == Mode.NAV)
@@ -848,7 +848,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     /** Live power block sits just under whatever is at the top (search bar or turn banner). */
     private fun positionWattCard() {
-        val show = mode == Mode.BROWSE || mode == Mode.NAV       // always there; "– W" until the bike sends data
+        val show = (mode == Mode.BROWSE || mode == Mode.NAV) && resultsCard.visibility != View.VISIBLE  // "– W" until the bike sends data
         topLeft.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return
         val anchor: View = if (mode == Mode.NAV) turnBanner else topBox
@@ -986,7 +986,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             if (i > 0) resultsCard.addView(divider())
             resultsCard.addView(placeRow(p, near, query, IconPaths.forCategory(p.cat)))
         }
-        resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE
+        resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE; resultsOverlayCheck()
     }
 
     private fun placeRow(p: Router.Place, near: Router.Pt?, query: String, icon: String): View {
@@ -1032,12 +1032,20 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun showResultsMessage(msg: String) {
         resultsCard.removeAllViews()
         resultsCard.addView(TextView(this).apply { text = msg; textSize = 15f; setTextColor(MUTED); setPadding(dp(18), dp(16), dp(18), dp(16)) })
-        resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE
+        resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE; resultsOverlayCheck()
     }
 
     private fun hideResults() {
         resultsCard.visibility = View.GONE
         if (mode == Mode.BROWSE) chipsScroll.visibility = View.VISIBLE
+        resultsOverlayCheck()
+    }
+
+    /** While the search results list is open, the power block and traffic button step aside. */
+    private fun resultsOverlayCheck() {
+        val open = resultsCard.visibility == View.VISIBLE
+        trafficBtn.visibility = if (open) View.GONE else View.VISIBLE
+        positionWattCard()
     }
 
     private fun clearSearch() {
@@ -1992,7 +2000,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             if (i > 0) resultsCard.addView(divider())
             resultsCard.addView(placeRow(p, near, "", "history"))
         }
-        resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE
+        resultsCard.visibility = View.VISIBLE; chipsScroll.visibility = View.GONE; resultsOverlayCheck()
     }
 
     // ============================ traffic ============================
