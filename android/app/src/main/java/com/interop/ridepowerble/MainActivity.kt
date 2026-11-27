@@ -1661,7 +1661,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
 
     private fun eta(r: Router.Route): Int {
         val d = dest ?: return r.seconds
-        return (r.seconds * learner.factor(learner.key(d.lat, d.lon))).roundToInt()
+        return learner.etaSec(learner.key(d.lat, d.lon), r.meters, r.seconds)   // distance ÷ your learned speed
     }
 
     private fun fillRoutesSheet() {

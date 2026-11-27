@@ -68,9 +68,17 @@ class TripLearningActivity : android.app.Activity() {
             top.addView(text("Nothing yet.\n\nStart navigation to a place and ride until it says “You have arrived”. Amped compares how long " +
                 "you took with its estimate and adjusts future ETAs to your e-bike.", 15f, INK, top = 10))
         } else {
-            top.addView(text(speedSentence(f), 20f, INK, bold = true, top = 10))
-            top.addView(text("Learned from $total ride${s(total)}. Every ETA uses this; places you've ridden to before use their own figure.", 14f, MUTED, top = 6))
-            top.addView(meter(f))
+            val mph = learner.globalMph()
+            if (mph != null) {
+                top.addView(text("You average ${"%.1f".format(mph)} mph door to door", 21f, INK, bold = true, top = 10))
+                top.addView(text("Learned from $total ride${s(total)}, stops and traffic lights included.", 14f, MUTED, top = 6))
+                top.addView(text("ETAs are now simply distance ÷ your speed — e.g. 5 miles ≈ ${fmt((5 / mph * 3600).roundToInt())}. " +
+                        "Places you've ridden to use their own speed.", 14f, INK, top = 10))
+            } else {
+                top.addView(text(speedSentence(f), 20f, INK, bold = true, top = 10))
+                top.addView(text("Learned from $total ride${s(total)}. Your next arrival switches this to your own average speed.", 14f, MUTED, top = 6))
+                top.addView(meter(f))
+            }
         }
         body.addView(top)
 
@@ -85,10 +93,10 @@ class TripLearningActivity : android.app.Activity() {
                 col.addView(text(d.name.ifEmpty { "A place you rode to" }, 16f, INK, bold = true))
                 val last = learner.history(d.key).firstOrNull()
                 col.addView(text(
-                    if (last != null) "Usually ${fmt(last.actualSec)} · estimate said ${fmt(last.predictedSec)}"
+                    if (last != null) "Usually ${fmt(last.actualSec)}" + (d.mph?.let { " · ${"%.1f".format(it)} mph average" } ?: "")
                     else "Saved before ride details were kept", 14f, INK, top = 3))
                 col.addView(text("${d.rides} ride${s(d.rides)}" + (if (d.lastAt > 0) " · last ${dayFmt.format(Date(d.lastAt))}" else "") +
-                        " · " + shortPct(d.factor), 13f, colorFor(d.factor), top = 3))
+                        (if (d.mph == null) " · " + shortPct(d.factor) else ""), 13f, MUTED, top = 3))
                 row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
                 row.addView(ImageView(this).apply { setImageDrawable(AppIcons.drawable(this@TripLearningActivity, "arrow_back", MUTED, 18)); rotation = 180f },
                     LinearLayout.LayoutParams(dp(20), dp(20)))
@@ -117,12 +125,19 @@ class TripLearningActivity : android.app.Activity() {
 
         val sum = card()
         sum.addView(iconLine("trending", "What it learned here", BLUE))
-        sum.addView(text(speedSentence(d.factor, here = true), 19f, INK, bold = true, top = 10))
         val last = rides.firstOrNull()
-        if (last != null) sum.addView(text("Next time the ETA here will be about ${fmt((last.plannedSec * d.factor).roundToInt())} " +
-                "instead of the standard ${fmt(last.plannedSec)}.", 15f, INK, top = 8))
-        if (d.meters > 0) sum.addView(text("Your usual route: ${miles(d.meters)}", 14f, MUTED, top = 6))
-        sum.addView(meter(d.factor))
+        if (d.mph != null) {
+            sum.addView(text("You average ${"%.1f".format(d.mph)} mph to here", 20f, INK, bold = true, top = 10))
+            if (d.meters > 0) sum.addView(text("Next time: ${miles(d.meters)} at ${"%.1f".format(d.mph)} mph ≈ " +
+                    "${fmt((d.meters / 1609.34 / d.mph * 3600).roundToInt())}", 15f, INK, top = 8))
+            if (last != null && last.plannedSec > 0) sum.addView(text("A standard bike estimate would say ${fmt(last.plannedSec)}.", 13f, MUTED, top = 6))
+        } else {
+            sum.addView(text(speedSentence(d.factor, here = true), 19f, INK, bold = true, top = 10))
+            if (last != null) sum.addView(text("Next time the ETA here will be about ${fmt((last.plannedSec * d.factor).roundToInt())} " +
+                    "instead of the standard ${fmt(last.plannedSec)}.", 15f, INK, top = 8))
+            if (d.meters > 0) sum.addView(text("Your usual route: ${miles(d.meters)}", 14f, MUTED, top = 6))
+            sum.addView(meter(d.factor))
+        }
         body.addView(sum)
 
         if (rides.isEmpty()) {
@@ -136,12 +151,11 @@ class TripLearningActivity : android.app.Activity() {
             for (r in rides) {
                 val c = card()
                 c.addView(text(fmtDay.format(Date(r.at)), 15f, INK, bold = true))
-                c.addView(statRow(listOf(fmt(r.actualSec) to "you took", fmt(r.predictedSec) to "estimate", shortPct(r.ratio) to "vs estimate"),
-                    listOf(INK, MUTED, colorFor(r.ratio))))
+                c.addView(statRow(listOf(fmt(r.actualSec) to "you took", (r.mph?.let { "%.1f".format(it) } ?: "–") to "mph door to door",
+                    fmt(r.plannedSec) to "bike estimate"), listOf(INK, BLUE, MUTED)))
                 val bits = ArrayList<String>()
                 if (r.riddenM > 0) {
                     bits += "Rode ${miles(r.riddenM)}" + (if (abs(r.riddenM - r.plannedM) > r.plannedM * 0.05) " (planned ${miles(r.plannedM)})" else "")
-                    bits += "%.1f mph average".format(r.riddenM / 1609.34 / (r.actualSec / 3600.0))
                 } else bits += "Planned ${miles(r.plannedM)}"
                 r.battUsed?.let { bits += "${it.roundToInt()}% battery" }
                 c.addView(text(bits.joinToString("  ·  "), 13f, MUTED, top = 8))
