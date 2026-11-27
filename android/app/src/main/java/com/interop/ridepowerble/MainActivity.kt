@@ -642,7 +642,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private fun buildSpeed(frame: FrameLayout) {
         // one navy bar, bottom-left: speed | charge ring | voltage + range (matches the app icon)
         val bar = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(8), dp(22), dp(8))
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(22), dp(8), dp(20), dp(8))
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(NAVY_TOP, NAVY_BOTTOM)).apply { cornerRadius = dp(34).toFloat() }
             elevation = dp(6).toFloat(); isClickable = true
             setOnClickListener { showBatteryDetails() }
@@ -666,16 +666,16 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         info.addView(tvVolts); info.addView(tvRange)
         bar.addView(info)
         battCard = bar
-        // road speed-limit sign sits on the bar's top-right corner (like Google)
+        // road speed-limit sign sits on the bar's top-left corner, over the speed
         tvLimit = TextView(this).apply {
             textSize = 13f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(3), RED) }
             elevation = dp(8).toFloat(); visibility = View.GONE
-            translationX = dp(8).toFloat(); translationY = -dp(12).toFloat()
+            translationX = -dp(8).toFloat(); translationY = -dp(12).toFloat()
         }
         val barBox = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
         barBox.addView(bar, FrameLayout.LayoutParams(WRAP, dp(68)))
-        barBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.END })
+        barBox.addView(tvLimit, FrameLayout.LayoutParams(dp(34), dp(34)).apply { gravity = Gravity.TOP or Gravity.START })
 
         val hudRow = LinearLayout(this).apply { gravity = Gravity.BOTTOM; clipChildren = false; clipToPadding = false; setPadding(0, dp(14), dp(12), dp(8)) }
         hudRow.addView(barBox)
@@ -841,8 +841,19 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         tempText.setTextColor(when { hottest >= limit -> RED; hottest >= limit - 10 -> AMBER; else -> MUTED })
     }
 
-    /** Live power block sits just under whatever is at the top (search bar or turn banner). */
+    /** "51.8 V · 1240 W" on the bar: voltage and live power, the dot dimmed. */
+    private fun showVoltsWatts(v: Double, w: Int) {
+        val vs = "%.1f V".format(v); val sep = "  ·  "
+        val sp = android.text.SpannableString(vs + sep + "$w W")
+        sp.setSpan(android.text.style.ForegroundColorSpan(BAR_LIGHT), vs.length, vs.length + sep.length, 0)
+        sp.setSpan(android.text.style.StyleSpan(Typeface.NORMAL), vs.length, vs.length + sep.length, 0)
+        tvVolts.text = sp
+    }
+
+    /** The old top-left power block: watts now live in the navy bar, so it stays hidden. */
     private fun positionWattCard() {
+        topLeft.visibility = View.GONE
+        if (true) return
         val show = (mode == Mode.BROWSE || mode == Mode.NAV) && resultsCard.visibility != View.VISIBLE  // "– W" until the bike sends data
         topLeft.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return
@@ -1928,11 +1939,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
             d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph, d.ctrlTemp, d.motorTemp, estimator.watts)
         if (d.batteryV > 5) {
-            tvVolts.text = "%.1f V".format(d.batteryV)
             if (lastPct < 0) showBatt(-1.0, true)
             val w = estimator.watts
-            wattCard.text = if (w >= 10) "${(w / 10).roundToInt() * 10} W" else "0 W"
-            positionWattCard()
+            showVoltsWatts(d.batteryV, if (w >= 10) (w / 10).roundToInt() * 10 else 0)
         }
         showBikeStatus(d)
         tripBatteryCheck(d, pct)
@@ -1962,10 +1971,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         }
         if (!d.cruise && wasCruise) speak("Cruise off")
         if (d.reverse && !wasReverse) speak("Reverse")
-        if (!d.cruise && steadySecs > hold + 6 && !cruiseTipShown) {
-            cruiseTipShown = true
-            toast("Cruise didn't switch on — while holding steady, hold − on the display for 2–3 s")
-        }
         wasCruise = d.cruise; wasReverse = d.reverse
         // faults: announce each new one
         val newBits = d.fault and lastFault.inv()
@@ -1979,10 +1984,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         // build the wanted chips; only touch the views when something actually changed (no flicker)
         val want = ArrayList<Pair<String, Int>>()
         if (d.cruise) want += "CRUISE" to 0xFF188038.toInt()
-        else if (steadySecs >= 1.4) {
-            val left = kotlin.math.ceil(hold - steadySecs).toInt()
-            if (left > 0) want += "Hold steady + hold − on display… ${left}s" to BLUE
-        }
         if (d.reverse) want += "REVERSE" to 0xFFE37400.toInt()
         if (d.brake) want += "BRAKE" to RED
         if (d.antiTheft) want += "ANTI-THEFT" to 0xFF5F6368.toInt()
