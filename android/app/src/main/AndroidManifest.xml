@@ -57,6 +57,11 @@
             android:exported="false"
             android:label="Ride history"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".TripLearningActivity"
+            android:exported="false"
+            android:label="Trip learning"
+            android:screenOrientation="portrait" />
         <receiver android:name=".UpdateReceiver" android:exported="false" />
     </application>
 </manifest>

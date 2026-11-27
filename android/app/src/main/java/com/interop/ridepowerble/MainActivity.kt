@@ -155,7 +155,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private var navStart = 0L
     private var navLearnable = true
     // the plan at Start (kept through reroutes) and GPS miles ridden since, for trip learning
-    private var planSec = 0; private var planM = 0; private var navStartRideMiles = 0.0
+    private var planSec = 0; private var planM = 0; private var navStartRideMiles = 0.0; private var navStartPct = -1.0
     private var offRouteCount = 0
     private var lastReroute = 0L
     private val manStage = HashMap<Int, Int>()
@@ -1833,7 +1833,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val d = dest ?: return
         nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear()
         navStart = System.currentTimeMillis(); navLearnable = true; offRouteCount = 0
-        planSec = r.seconds; planM = r.meters; navStartRideMiles = rideMiles
+        planSec = r.seconds; planM = r.meters; navStartRideMiles = rideMiles; navStartPct = lastPct
         tripStartMiles = range.totalMiles
         follow = true
         navBearing = lastLoc?.let { nav!!.snap(it.latitude, it.longitude, 0).bearing }
@@ -2047,7 +2047,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         navLearnable = ok
         if (ok) {
             val m = if (riddenM > 0) riddenM else planM
-            learner.record(learner.key(d.lat, d.lon), (planSec.toDouble() * m / planM).toInt(), secs, r?.meters ?: planM)
+            learner.record(learner.key(d.lat, d.lon), (planSec.toDouble() * m / planM).toInt(), secs, r?.meters ?: planM,
+                name = d.title, plannedSec = planSec, plannedM = planM, riddenM = riddenM,
+                battUsed = if (navStartPct >= 0 && lastPct >= 0 && navStartPct >= lastPct) navStartPct - lastPct else null)
         }
         speak("You have arrived at ${d.title}")
         nav = null
@@ -2505,6 +2507,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     /** Picks up anything changed on the Settings screen. */
     private fun applySettings() {
         val p = prefs()
+        if (p.getBoolean("reloadTrips", false)) { p.edit().remove("reloadTrips").apply(); learner = TripLearner(this) }
         if (p.getBoolean("resetLearners", false)) {
             p.edit().remove("resetLearners").apply()
             estimator = BatteryEstimator(this); range = RangeLearner(this); learner = TripLearner(this)

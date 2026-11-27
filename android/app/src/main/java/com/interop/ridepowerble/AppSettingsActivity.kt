@@ -148,10 +148,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             line()
             toggle("bell", "Speed limit alert", "Speaks when you go over the road's limit", "speedAlert", true)
             line()
-            row("history", "Trip learning", tripSummary()) { confirm("Reset trip learning?",
-                "Amped forgets how long your usual trips take and which routes you ride. ETAs go back to the default.") {
-                getSharedPreferences("trips", Context.MODE_PRIVATE).edit().clear().apply(); p.edit().putBoolean("resetLearners", true).apply(); build()
-            } }
+            row("history", "Trip learning", tripSummary()) { startActivity(android.content.Intent(this, TripLearningActivity::class.java)) }
         }
 
         // ---------------- Traffic ----------------
@@ -206,7 +203,7 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
 
     private fun tripSummary(): String {
         val n = TripLearner(this).globalRides()
-        return if (n == 0) "No rides learned yet — tap to reset" else "Learned from $n ride${if (n == 1) "" else "s"} — tap to reset"
+        return if (n == 0) "No rides learned yet — tap to see how it works" else "Learned from $n ride${if (n == 1) "" else "s"} — tap to see what it learned"
     }
 
     private fun confirmResetBattery() = confirm("Reset battery learning?",
