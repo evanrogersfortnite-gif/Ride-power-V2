@@ -175,6 +175,10 @@ the settings screen — these are the safe bounds; don't exceed them.
 | 17 | CLT | `currentLimitingTemp` | stepper | 50 – 200 | ℃ |
 | 18 | RPP | `rotorPolesPair` | stepper | 1 – 100 | — |
 
+**Levels 1–5 (P1–P5) limit top speed, not current:** every level draws up to the full
+current (controller max × DCC %) from a standstill; power only falls away as the bike
+approaches that level's speed cap.
+
 **Writing settings safely:** read the current 20-byte frame first (CMD 1), change
 only the bytes you intend to, recompute the checksum, and send all 18 payload bytes
 back. Don't send a frame with fields you haven't read — you'd overwrite them with

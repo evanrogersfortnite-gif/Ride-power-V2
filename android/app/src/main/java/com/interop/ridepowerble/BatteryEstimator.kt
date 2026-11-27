@@ -57,9 +57,10 @@ class BatteryEstimator(ctx: Context) {
 
     /**
      * Battery current ceiling: controller max × "DC current %" (byte 2 of the parameter frame).
-     * The level % (bytes 5–9) does NOT cap throttle current: the 27 Nov ride sagged just as far in
-     * levels 3 and 4 as in level 5 (display showed ~2100 W while the old level cap held it at 1890 W).
-     * Resistance is only learned from pulls in the strongest level, where the ceiling is certain.
+     * The level % (bytes 5–9, "pasNSpeed") is a SPEED limit, not a current limit (confirmed by the rider):
+     * every level pulls full current until it nears its speed cap, then power falls away. The 27 Nov
+     * ride sagged just as far in levels 3 and 4 as in level 5 (display ~2100 W vs the old 1890 W cap).
+     * Resistance is only learned in the strongest level, where the speed cap never cuts a pull short.
      */
     private fun limitFor(gear: Int): Pair<Double, Boolean> {
         val p = BleManager.lastParams
