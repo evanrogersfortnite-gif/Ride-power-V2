@@ -176,6 +176,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private lateinit var tvRange: TextView
     private lateinit var tvVolts: TextView
     private lateinit var wattCard: TextView
+    private lateinit var tempText: TextView
+    private lateinit var topLeft: LinearLayout
     private lateinit var tvSpeed: TextView
     private lateinit var tvLimit: TextView
     private lateinit var sheet: LinearLayout
@@ -680,13 +682,19 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         hudRow.addView(battCard, LinearLayout.LayoutParams(dp(HUD), dp(HUD)).apply { leftMargin = dp(12) })
 
         // live power block, top-left (under the search bar / turn banner)
+        // live power + temperatures, top-left (under the search bar / turn banner)
+        topLeft = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(7), dp(14), dp(8))
+            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat(); visibility = View.GONE
+        }
         wattCard = TextView(this).apply {
             text = "– W"; textSize = 18f; setTextColor(INK); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_VERTICAL
             setCompoundDrawablesRelative(AppIcons.drawable(this@MainActivity, "bolt", 0xFFF57C00.toInt(), 22), null, null, null)
-            compoundDrawablePadding = dp(4); setPadding(dp(10), dp(8), dp(14), dp(8))
-            background = shape(Color.WHITE, dp(18)); elevation = dp(4).toFloat(); visibility = View.GONE
+            compoundDrawablePadding = dp(4)
         }
-        frame.addView(wattCard, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(14) })
+        tempText = TextView(this).apply { text = "Motor –° · Ctrl –°"; textSize = 12f; setTextColor(MUTED); setPadding(dp(4), dp(2), 0, 0) }
+        topLeft.addView(wattCard); topLeft.addView(tempText)
+        frame.addView(topLeft, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(14) })
         // bike status chips (cruise / reverse / brake / anti-theft / cruise countdown) above the cards
         hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         hud.addView(hudRow)
@@ -819,15 +827,27 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
+    /**
+     * Motor and controller temperatures. Colour warns as they approach the controller's own
+     * "current-limiting temp" setting (parameter byte 17; it cuts power to protect itself above it).
+     */
+    private fun showTemps(d: BleManager.Realtime) {
+        val limit = BleManager.lastParams?.let { if (it.size >= 20) (it[17].toInt() and 0xff).takeIf { v -> v in 50..200 } else null } ?: 90
+        val hottest = max(d.motorTemp, d.ctrlTemp)
+        val motor = if (d.motorTemp > 0) "${d.motorTemp}°" else "–°"     // 0 = no motor sensor connected
+        tempText.text = "Motor $motor · Ctrl ${d.ctrlTemp}°"
+        tempText.setTextColor(when { hottest >= limit -> RED; hottest >= limit - 10 -> AMBER; else -> MUTED })
+    }
+
     /** Live power block sits just under whatever is at the top (search bar or turn banner). */
     private fun positionWattCard() {
         val show = mode == Mode.BROWSE || mode == Mode.NAV       // always there; "– W" until the bike sends data
-        wattCard.visibility = if (show) View.VISIBLE else View.GONE
+        topLeft.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return
         val anchor: View = if (mode == Mode.NAV) turnBanner else topBox
         val want = anchor.bottom + dp(10)
-        val lp = wattCard.layoutParams as FrameLayout.LayoutParams
-        if (anchor.bottom > 0 && lp.topMargin != want) { lp.topMargin = want; wattCard.layoutParams = lp }
+        val lp = topLeft.layoutParams as FrameLayout.LayoutParams
+        if (anchor.bottom > 0 && lp.topMargin != want) { lp.topMargin = want; topLeft.layoutParams = lp }
     }
 
     private fun closeAll() {
@@ -1783,6 +1803,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             tvVolts.text = "%.1f V".format(d.batteryV)
             val w = estimator.watts
             wattCard.text = if (w >= 10) "${(w / 10).roundToInt() * 10} W" else "0 W"
+            showTemps(d)
             positionWattCard()
         }
         showBikeStatus(d)
@@ -1853,7 +1874,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     override fun onStatus(status: String, connected: Boolean) = runOnUiThread {
         if (!backgrounded) tuneGps()
         if (!connected) { statusRow.removeAllViews(); shownChips = emptyList(); statusRow.visibility = View.GONE }
-        if (!connected) { tvVolts.text = "– V"; wattCard.text = "– W" }
+        if (!connected) { tvVolts.text = "– V"; wattCard.text = "– W"; tempText.text = "Motor –° · Ctrl –°"; tempText.setTextColor(MUTED) }
         if (!connected) showBatt(lastPct, false)
     }
 
