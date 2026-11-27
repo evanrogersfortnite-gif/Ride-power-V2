@@ -51,6 +51,89 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
     )
 
     private val steppers = HashMap<String, EditText>()
+    private lateinit var modesRow: LinearLayout
+
+    // ============================ ride modes ============================
+    private data class Mode(val key: String, val title: String, val icon: String, val color: Int, val suggest: Map<String, Int>)
+    private val MODES = listOf(
+        Mode("eco", "Eco", "leaf", 0xFF188038.toInt(), mapOf("dcCurrent" to 60, "phaseCurrent" to 70, "accelerateStrength" to 2, "boost" to 0)),
+        Mode("sport", "Sport", "bolt", 0xFF1A73E8.toInt(), mapOf("dcCurrent" to 85, "phaseCurrent" to 90, "accelerateStrength" to 4, "boost" to 0)),
+        Mode("rage", "Rage", "fire", 0xFFE8430B.toInt(), mapOf("dcCurrent" to 100, "phaseCurrent" to 100, "accelerateStrength" to 5, "boost" to 1)))
+    private fun presets() = getSharedPreferences("presets", Context.MODE_PRIVATE)
+    private fun loadPreset(key: String): IntArray? = presets().getString(key, null)?.split(",")?.mapNotNull { it.toIntOrNull() }
+        ?.takeIf { it.size == SPECS.size }?.toIntArray()
+
+    private fun controlsLoaded() = BleManager.lastParams != null && steppers.values.all { it.text.isNotEmpty() }
+    private fun currentAll() = IntArray(SPECS.size) { currentValue(SPECS[it]) }
+
+    /** Three mode cards; the one matching the controller's current settings is highlighted. */
+    private fun buildModes() {
+        modesRow.removeAllViews()
+        val now = if (controlsLoaded()) currentAll() else null
+        MODES.forEachIndexed { i, m ->
+            val saved = loadPreset(m.key)
+            val active = saved != null && now != null && saved.contentEquals(now)
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(8), dp(12), dp(8), dp(12))
+                background = rounded(if (active) m.color else CARD, dp(14).toFloat(), dp(if (active) 0 else 1), LINE)
+                setOnClickListener { modeDialog(m) }
+            }
+            card.addView(ImageView(this).apply {
+                setImageDrawable(AppIcons.drawable(this@SettingsActivity, m.icon, if (active) Color.WHITE else m.color, 26))
+            }, LinearLayout.LayoutParams(dp(26), dp(26)))
+            card.addView(TextView(this).apply {
+                text = m.title; textSize = 15f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER
+                setTextColor(if (active) Color.WHITE else INK); setPadding(0, dp(4), 0, 0)
+            })
+            card.addView(TextView(this).apply {
+                text = when { active -> "Active"; saved != null -> "Saved"; else -> "Not set up" }
+                textSize = 11f; gravity = Gravity.CENTER; setTextColor(if (active) Color.WHITE else MUTED)
+            })
+            modesRow.addView(card, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) leftMargin = dp(8) })
+        }
+    }
+
+    private fun describe(v: IntArray): String = SPECS.mapIndexed { i, s ->
+        val x = v[i]; val txt = if (s.isEnum) (s.enum!!.getOrNull(x - s.enumBase) ?: "$x") else "$x${if (s.unit.isNotEmpty()) " ${s.unit}" else ""}"
+        "${s.label}: $txt"
+    }.filterIndexed { i, _ -> SPECS[i].key in setOf("dcCurrent", "phaseCurrent", "accelerateStrength", "boost", "limitMode",
+        "pas1Speed", "pas2Speed", "pas3Speed", "pas4Speed", "pas5Speed", "regenBraking") }.joinToString("\n")
+
+    private fun modeDialog(m: Mode) {
+        if (!controlsLoaded()) { toast("Connect and tap Read first, so modes start from your real settings"); BleManager.read(); return }
+        val saved = loadPreset(m.key)
+        val b = AlertDialog.Builder(this).setTitle("${m.title} mode")
+        if (saved != null) {
+            b.setMessage(describe(saved) + "\n\nApply shows exactly what will change before anything is sent.")
+            b.setPositiveButton("Apply to bike") { _, _ -> applyValues(saved) }
+            b.setNeutralButton("Save current as ${m.title}") { _, _ -> savePreset(m) }
+        } else {
+            b.setMessage("Not set up yet.\n\nEither adjust the settings below how you like them and save them as ${m.title}, " +
+                    "or start from a suggested ${m.title} (changes only DC current, phase current, accelerate strength and boost from your current settings).")
+            b.setPositiveButton("Use suggested") { _, _ ->
+                val v = currentAll()
+                SPECS.forEachIndexed { i, s -> m.suggest[s.key]?.let { v[i] = clamp(it, s.min, s.max) } }
+                presets().edit().putString(m.key, v.joinToString(",")).apply(); buildModes()
+                toast("${m.title} saved — tap it again to apply or fine-tune")
+            }
+            b.setNeutralButton("Save current as ${m.title}") { _, _ -> savePreset(m) }
+        }
+        b.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun savePreset(m: Mode) {
+        presets().edit().putString(m.key, currentAll().joinToString(",")).apply()
+        buildModes(); toast("Saved as ${m.title}")
+    }
+
+    /** Puts the preset into the controls and runs the normal Download (shows every change, asks to confirm). */
+    private fun applyValues(v: IntArray) {
+        SPECS.forEachIndexed { i, s ->
+            if (s.isEnum) spinners[s.key]?.setSelection(clamp(v[i] - s.enumBase, 0, s.enum!!.size - 1))
+            else steppers[s.key]?.setText(clamp(v[i], s.min, s.max).toString())
+        }
+        writeParams()
+    }
     private val spinners = HashMap<String, Spinner>()
     private lateinit var statusChip: TextView
     private lateinit var logText: TextView
@@ -86,6 +169,13 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
 
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(14), dp(14), dp(28)) }
         root.addView(body)
+
+        // ---- ride modes: Eco / Sport / Rage presets ----
+        body.addView(sectionTitle("Ride modes"))
+        modesRow = LinearLayout(this)
+        body.addView(modesRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        buildModes()
+        body.addView(sectionTitle("Controller settings"))
 
         val sc = cardColumn()
         sc.addView(TextView(this).apply {
@@ -164,6 +254,7 @@ class SettingsActivity : android.app.Activity(), BleManager.Listener {
             else steppers[s.key]?.setText(clamp(v, s.min, s.max).toString())
         }
         setControlsEnabled(true)
+        buildModes()
     }
     override fun onRealtime(d: BleManager.Realtime) = runOnUiThread {
         tvTemps.text = "Controller temp: ${d.ctrlTemp} ℃    Motor temp: ${d.motorTemp} ℃"

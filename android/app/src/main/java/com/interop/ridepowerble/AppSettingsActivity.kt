@@ -60,6 +60,14 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
         body.removeAllViews()
         val p = prefs()
 
+        // ---------------- Rides ----------------
+        section("Rides")
+        card {
+            row("history", "Ride history", "Your rides with start time, distance, speed, battery and route") {
+                startActivity(Intent(this, RideHistoryActivity::class.java))
+            }
+        }
+
         // ---------------- Bike ----------------
         section("Bike")
         card {
@@ -113,6 +121,8 @@ class AppSettingsActivity : android.app.Activity(), BleManager.Listener {
             val hz = (if (android.os.Build.VERSION.SDK_INT >= 30) display?.refreshRate else @Suppress("DEPRECATION") windowManager.defaultDisplay.refreshRate)?.let { Math.round(it) } ?: 60
             choice("tune", "Map smoothness", "mapFps", listOf("Maximum — ${hz} Hz (smoothest)" to 0) +
                 listOf(120, 90, 60).filter { it < hz }.map { "$it Hz" to it } + listOf("30 Hz (saves battery)" to 30), 0)
+            line()
+            row("download", "Offline maps", "Download the map around you for riding with no signal") { OfflineMaps.open(this@AppSettingsActivity) }
             line()
             toggle("store", "Shops & places on the map", "Names and icons when zoomed in", "showPois", true)
             line()

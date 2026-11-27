@@ -52,6 +52,11 @@
             android:exported="false"
             android:label="Settings"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".RideHistoryActivity"
+            android:exported="false"
+            android:label="Ride history"
+            android:screenOrientation="portrait" />
         <receiver android:name=".UpdateReceiver" android:exported="false" />
     </application>
 </manifest>

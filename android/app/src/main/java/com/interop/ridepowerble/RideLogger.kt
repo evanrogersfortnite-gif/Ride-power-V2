@@ -28,7 +28,7 @@ class RideLogger(ctx: Context) {
 
     fun log(lat: Double?, lon: Double?, mph: Double?, acc: Float?, volts: Double?, throttle: Double?, rpm: Int?,
             pct: Double, holding: Boolean, mode: String, along: Double, workState: Int? = null, motorMph: Double? = null,
-            ctrlTemp: Int? = null, motorTemp: Int? = null) {
+            ctrlTemp: Int? = null, motorTemp: Int? = null, powerW: Double? = null) {
         val now = System.currentTimeMillis()
         if (now - lastLineAt < 900) return
         try {
@@ -39,7 +39,7 @@ class RideLogger(ctx: Context) {
                 SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(now)), f(lat, 6), f(lon, 6), f(mph, 1),
                 acc?.let { "%.0f".format(Locale.US, it) } ?: "", f(volts, 2), f(throttle, 2), rpm?.toString() ?: "",
                 if (pct >= 0) f(pct, 1) else "", if (holding) "1" else "0", mode, f(along, 0),
-                workState?.toString() ?: "", f(motorMph, 1), ctrlTemp?.toString() ?: "", motorTemp?.toString() ?: ""
+                workState?.toString() ?: "", f(motorMph, 1), ctrlTemp?.toString() ?: "", motorTemp?.toString() ?: "", f(powerW, 0)
             ).joinToString(",")).append('\n')
             if (++lines % 20 == 0) writer!!.flush()
         } catch (_: Exception) {}
@@ -50,7 +50,7 @@ class RideLogger(ctx: Context) {
         val name = "ride-" + SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.US).format(Date(now)) + ".csv"
         file = File(dir, name)
         writer = FileWriter(file!!, true).apply {
-            append("time,lat,lon,gps_mph,gps_acc_m,battery_v,throttle_v,motor_raw,battery_pct,pct_held,mode,route_m,work_state,motor_mph,ctrl_temp_c,motor_temp_c\n")
+            append("time,lat,lon,gps_mph,gps_acc_m,battery_v,throttle_v,motor_raw,battery_pct,pct_held,mode,route_m,work_state,motor_mph,ctrl_temp_c,motor_temp_c,power_w\n")
         }
         // keep the newest 20 rides
         dir.listFiles()?.sortedByDescending { it.name }?.drop(20)?.forEach { it.delete() }
@@ -67,14 +67,20 @@ class RideLogger(ctx: Context) {
         fun export(act: Activity) {
             val list = rides(act)
             if (list.isEmpty()) { Toast.makeText(act, "No rides recorded yet", Toast.LENGTH_SHORT).show(); return }
+            // e.g. "Thu 27 Nov · started 20:22 · 9.2 mi"
             val labels = list.map { f ->
-                val n = f.name.removePrefix("ride-").removeSuffix(".csv").replace('_', ' ')
-                "$n  ·  ${maxOf(1, (f.length() / 1024).toInt())} KB"
+                val s = RideStats.summarize(f)
+                if (s != null) "${SimpleDateFormat("EEE d MMM", Locale.UK).format(s.start)}  ·  started ${SimpleDateFormat("HH:mm", Locale.UK).format(s.start)}" +
+                        (if (s.miles >= 0.1) "  ·  ${"%.1f".format(s.miles)} mi" else "  ·  parked")
+                else f.name.removePrefix("ride-").removeSuffix(".csv").replace('_', ' ')
             }.toTypedArray()
             AlertDialog.Builder(act).setTitle("Export a ride")
                 .setItems(labels) { _, i -> save(act, list[i]) }
                 .setNegativeButton("Cancel", null).show()
         }
+
+        /** Saves a ride log to Downloads/Amped and opens the share sheet. */
+        fun shareFile(act: Activity, f: File) = save(act, f)
 
         private fun save(act: Activity, f: File) {
             try {
