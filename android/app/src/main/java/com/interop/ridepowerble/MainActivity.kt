@@ -154,6 +154,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     private var navBearing = 0.0
     private var navStart = 0L
     private var navLearnable = true
+    // the plan at Start (kept through reroutes) and GPS miles ridden since, for trip learning
+    private var planSec = 0; private var planM = 0; private var navStartRideMiles = 0.0
     private var offRouteCount = 0
     private var lastReroute = 0L
     private val manStage = HashMap<Int, Int>()
@@ -1831,6 +1833,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val d = dest ?: return
         nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear()
         navStart = System.currentTimeMillis(); navLearnable = true; offRouteCount = 0
+        planSec = r.seconds; planM = r.meters; navStartRideMiles = rideMiles
         tripStartMiles = range.totalMiles
         follow = true
         navBearing = lastLoc?.let { nav!!.snap(it.latitude, it.longitude, 0).bearing }
@@ -2025,7 +2028,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             val r = Router.route(from.latitude, from.longitude, d.lat, d.lon, 0, profile)
             runOnUiThread {
                 if (r != null && mode == Mode.NAV && dest === d) {
-                    routes = listOf(r); sel = 0; nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear(); navLearnable = false
+                    routes = listOf(r); sel = 0; nav = NavRoute(r); navSeg = 0; navAlong = 0.0; jumpCount = 0; manStage.clear()
                     loadStreetNames(nav!!)
                     lastLoc?.let { onNavFix(it) }
                 }
@@ -2037,7 +2040,15 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val r = nav?.route; val d = dest ?: return
         val secs = ((System.currentTimeMillis() - navStart) / 1000).toInt()
         val miles = range.totalMiles - tripStartMiles
-        if (r != null && navLearnable && secs > 30) learner.record(learner.key(d.lat, d.lon), r.seconds, secs, r.meters)
+        // Learn even after a reroute or a different road: compare against the plan at Start, scaled to the
+        // distance actually ridden (GPS). Skipped only if the ride was wildly different (a detour, a stop-off).
+        val riddenM = ((rideMiles - navStartRideMiles) * 1609.34).toInt()
+        val ok = planSec > 0 && planM > 0 && secs > 30 && (riddenM <= 0 || riddenM.toDouble() / planM in 0.7..1.4)
+        navLearnable = ok
+        if (ok) {
+            val m = if (riddenM > 0) riddenM else planM
+            learner.record(learner.key(d.lat, d.lon), (planSec.toDouble() * m / planM).toInt(), secs, r?.meters ?: planM)
+        }
         speak("You have arrived at ${d.title}")
         nav = null
         srcSel?.setGeoJson(fc(emptyList())); srcAlt?.setGeoJson(fc(emptyList()))
