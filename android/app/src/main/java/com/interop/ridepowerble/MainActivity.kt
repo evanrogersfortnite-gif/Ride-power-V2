@@ -1778,7 +1778,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val pct = estimator.update(d.batteryV, d.throttleV, d.motorMph, d.cruise, d.brake, d.gear)
         val l = lastLoc
         rideLog.log(l?.latitude, l?.longitude, l?.let { if (it.hasSpeed()) it.speed * 2.2369363 else null }, l?.accuracy,
-            d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph)
+            d.batteryV, d.throttleV, d.speedRpm, pct, estimator.holding, mode.name, navAlong, d.workState, d.motorMph, d.ctrlTemp, d.motorTemp)
         if (d.batteryV > 5) {
             tvVolts.text = "%.1f V".format(d.batteryV)
             val w = estimator.watts
