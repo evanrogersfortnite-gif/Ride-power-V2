@@ -695,6 +695,9 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         tvVolts = TextView(this).apply { text = "No bike"; textSize = 16f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD) }
         tvRange = TextView(this).apply { text = ""; textSize = 11.5f; setTextColor(BAR_LIGHT) }
+        // the bar must stop short of the settings button: cap the text column and shrink long lines to fit
+        val infoMax = resources.displayMetrics.widthPixels - dp(14) - dp(14 + 60 + 10) - dp(167)
+        for (tv in listOf(tvVolts, tvRange)) { tv.maxWidth = infoMax; tv.setSingleLine(true); tv.ellipsize = TextUtils.TruncateAt.END }
         info.addView(tvVolts); info.addView(tvRange)
         bar.addView(info)
         battCard = bar
@@ -884,6 +887,20 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         sp.setSpan(android.text.style.ForegroundColorSpan(BAR_LIGHT), vs.length, vs.length + sep.length, 0)
         sp.setSpan(android.text.style.StyleSpan(Typeface.NORMAL), vs.length, vs.length + sep.length, 0)
         tvVolts.text = sp
+        fitText(tvVolts, 16f)
+    }
+
+    /** Shrinks a one-line text (from [maxSp], down to 70%) until it fits its max width. */
+    private fun fitText(tv: TextView, maxSp: Float) {
+        val limit = tv.maxWidth.takeIf { it in 1 until Int.MAX_VALUE } ?: return
+        var sp = maxSp
+        val p = android.text.TextPaint(tv.paint)
+        while (sp > maxSp * 0.7f) {
+            p.textSize = sp * resources.displayMetrics.scaledDensity
+            if (p.measureText(tv.text.toString()) <= limit) break
+            sp -= 0.5f
+        }
+        if (tv.textSize != sp * resources.displayMetrics.scaledDensity) tv.textSize = sp
     }
 
     /** The old top-left power block: watts now live in the navy bar, so it stays hidden. */
@@ -2261,6 +2278,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         tvBatt.text = "${p.roundToInt()}"
         val mi = range.rangeAt(p, rangeMph())
         tvRange.text = (if (rangeAuto()) "Avg %.1f mph".format(rangeMph()) else "At ${rangeMph().roundToInt()} mph") + " = ${mi.roundToInt()} mi left"
+        fitText(tvRange, 11.5f)
     }
 
     /** The battery charge ring: faint track + yellow-to-orange arc filling clockwise from the top. */
