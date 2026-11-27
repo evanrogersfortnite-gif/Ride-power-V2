@@ -832,10 +832,13 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
      * "current-limiting temp" setting (parameter byte 17; it cuts power to protect itself above it).
      */
     private fun showTemps(d: BleManager.Realtime) {
+        // this controller sends 0 for both when it has no sensor / doesn't report them: then hide the line
+        if (d.motorTemp == 0 && d.ctrlTemp == 0) { tempText.visibility = View.GONE; return }
+        tempText.visibility = View.VISIBLE
         val limit = BleManager.lastParams?.let { if (it.size >= 20) (it[17].toInt() and 0xff).takeIf { v -> v in 50..200 } else null } ?: 90
         val hottest = max(d.motorTemp, d.ctrlTemp)
-        val motor = if (d.motorTemp > 0) "${d.motorTemp}°" else "–°"     // 0 = no motor sensor connected
-        tempText.text = "Motor $motor · Ctrl ${d.ctrlTemp}°"
+        fun t(v: Int) = if (v > 0) "$v°" else "–°"
+        tempText.text = "Motor ${t(d.motorTemp)} · Ctrl ${t(d.ctrlTemp)}"
         tempText.setTextColor(when { hottest >= limit -> RED; hottest >= limit - 10 -> AMBER; else -> MUTED })
     }
 
