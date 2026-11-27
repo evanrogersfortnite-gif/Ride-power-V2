@@ -693,7 +693,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             compoundDrawablePadding = dp(4)
         }
         tempText = TextView(this).apply { text = "Motor –° · Ctrl –°"; textSize = 12f; setTextColor(MUTED); setPadding(dp(4), dp(2), 0, 0) }
-        topLeft.addView(wattCard); topLeft.addView(tempText)
+        topLeft.addView(wattCard)      // temperatures not shown: this controller doesn't report them
         frame.addView(topLeft, FrameLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.TOP or Gravity.START; leftMargin = dp(14) })
         // bike status chips (cruise / reverse / brake / anti-theft / cruise countdown) above the cards
         hud = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
@@ -1806,7 +1806,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             tvVolts.text = "%.1f V".format(d.batteryV)
             val w = estimator.watts
             wattCard.text = if (w >= 10) "${(w / 10).roundToInt() * 10} W" else "0 W"
-            showTemps(d)
             positionWattCard()
         }
         showBikeStatus(d)
