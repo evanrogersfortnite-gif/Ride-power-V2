@@ -56,15 +56,20 @@ class BatteryEstimator(ctx: Context) {
     val restingVolts get() = core.lastOcv
 
     /**
-     * Current limit for the level you're in: controller max × "DC current %" × that level's %,
-     * read from the controller's own settings (bytes 2 and 5–9 of the parameter frame).
+     * Battery current ceiling: controller max × "DC current %" (byte 2 of the parameter frame).
+     * The level % (bytes 5–9) does NOT cap throttle current: the 27 Nov ride sagged just as far in
+     * levels 3 and 4 as in level 5 (display showed ~2100 W while the old level cap held it at 1890 W).
+     * Resistance is only learned from pulls in the strongest level, where the ceiling is certain.
      */
     private fun limitFor(gear: Int): Pair<Double, Boolean> {
         val p = BleManager.lastParams
-        if (p == null || p.size < 20 || gear !in 1..5) return core.maxAmps to false
+        if (p == null || p.size < 20) return core.maxAmps to false
         val dcc = (p[2].toInt() and 0xff).coerceIn(10, 100)
-        val lvl = (p[4 + gear].toInt() and 0xff).coerceIn(1, 100)
-        return core.maxAmps * dcc / 100.0 * lvl / 100.0 to true
+        val lim = core.maxAmps * dcc / 100.0
+        if (gear !in 1..5) return lim to false
+        val lvl = p[4 + gear].toInt() and 0xff
+        val top = (1..5).maxOf { p[4 + it].toInt() and 0xff }
+        return lim to (lvl >= top)
     }
     var lastLimitAmps = 0.0; private set
     private var lastAt = 0L
