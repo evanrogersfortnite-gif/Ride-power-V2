@@ -245,7 +245,31 @@ object Router {
     /** "cinema", "cinemas near me", "pubs nearby" → that kind of place; a shop name → null. */
     fun categoryFor(q: String): Category? {
         val t = q.lowercase().trim().replace(Regex("\\s+(near me|nearby|near by|around me|around here|in this area)$"), "").trim()
-        return CATS.firstOrNull { (keys, _) -> t in keys }?.second
+        if (t.length < 3) return null
+        CATS.firstOrNull { (keys, _) -> t in keys }?.let { return it.second }
+        // misspelt ("restraunts", "cinemma", "supermarkt"): close enough to one of the words
+        val allowed = when { t.length >= 8 -> 3; t.length >= 6 -> 2; t.length == 5 -> 1; else -> 0 }
+        if (allowed == 0) return null
+        var best: Category? = null; var bestD = allowed + 1
+        for ((keys, c) in CATS) for (k in keys) {
+            if (abs(k.length - t.length) > allowed) continue
+            val d = editDistance(t, k)
+            if (d < bestD) { bestD = d; best = c }
+        }
+        return best
+    }
+
+    /** Edits (insert / delete / change / swap two letters) to turn [a] into [b]. */
+    private fun editDistance(a: String, b: String): Int {
+        val d = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) d[i][0] = i
+        for (j in 0..b.length) d[0][j] = j
+        for (i in 1..a.length) for (j in 1..b.length) {
+            val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+            d[i][j] = minOf(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) d[i][j] = minOf(d[i][j], d[i - 2][j - 2] + 1)
+        }
+        return d[a.length][b.length]
     }
 
     /** Every place of [c] inside the box (south, west, north, east), nearest the middle first. */
