@@ -294,9 +294,10 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         st.addLayer(LineLayer("route-alt-l", "route-alt").withProperties(PropertyFactory.lineColor("#BCCBDF"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 3.5f), Expression.stop(15f, 6f), Expression.stop(17f, 9f), Expression.stop(19f, 16f))), *rnd))
         st.addLayer(LineLayer("route-sel-casing", "route-sel").withProperties(PropertyFactory.lineColor("#1A47C9"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 6f), Expression.stop(15f, 9.5f), Expression.stop(17f, 14f), Expression.stop(19f, 24f))), *rnd))
         st.addLayer(LineLayer("route-sel-l", "route-sel").withProperties(PropertyFactory.lineColor("#4285F4"), PropertyFactory.lineWidth(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(12f, 4f), Expression.stop(15f, 6.5f), Expression.stop(17f, 10f), Expression.stop(19f, 18f))), *rnd))
-        st.addLayer(CircleLayer("dest-l", "dest").withProperties(
-            PropertyFactory.circleRadius(9f), PropertyFactory.circleColor("#EA4335"),
-            PropertyFactory.circleStrokeColor("#FFFFFF"), PropertyFactory.circleStrokeWidth(3.5f)))
+        st.addImage("dest-pin", makeDestPin())
+        st.addLayer(SymbolLayer("dest-l", "dest").withProperties(
+            PropertyFactory.iconImage("dest-pin"), PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+            PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true)))
         // Google-style faint blue cone showing which way the phone is facing
         st.addImage("me-beam-img", makeBeam())
         st.addLayer(SymbolLayer("me-beam", "me").withProperties(
@@ -327,10 +328,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             PropertyFactory.textMaxWidth(9f), PropertyFactory.textOptional(true),
             PropertyFactory.symbolSortKey(Expression.get("rank")),
             PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE))
-        st.addLayerBelow(poiLayer("poi-major").also {
-            it.setFilter(Expression.eq(Expression.get("major"), Expression.literal(1))); it.setMinZoom(12.5f); it.setMaxZoom(14.5f)
-        }, "route-alt-casing")
-        st.addLayerBelow(poiLayer("poi-l").also { it.setMinZoom(14.5f) }, "route-alt-casing")
+        try { addPlaceLayers(st) } catch (_: Exception) {}
         if (trafficOn) addTrafficLayer(st)
         redrawRoutes()
         lastLoc?.let { srcMe?.setGeoJson(pointJson(it.latitude, it.longitude)) }
@@ -448,11 +446,8 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
                                 PropertyFactory.textLetterSpacing(0.12f), PropertyFactory.textSize(z(11f to 11f, 14f to 13f, 16f to 15f)),
                                 PropertyFactory.textColor(if (dark) "#AEB4BB" else "#5F6368"),
                                 PropertyFactory.textHaloColor(if (dark) "#1F1F1F" else "#FFFFFF"), PropertyFactory.textHaloWidth(1.5f))
-                        // bus stops & transit: only when zoomed right in (Google hides them further out)
-                        l.sourceLayer == "poi" && (id.contains("transit") || id.contains("bus") || id.contains("rail")) ->
-                            l.setMinZoom(16.5f)
-                        // shops & places: one zoom level earlier, like Google ("Co-op Food" visible further out)
-                        l.sourceLayer == "poi" -> if (l.minZoom > 14f) l.setMinZoom(maxOf(14f, l.minZoom - 1f))
+                        // the map's own place icons are replaced by Google-style ones (addPlaceLayers)
+                        l.sourceLayer == "poi" && !id.startsWith("g-") -> l.setProperties(PropertyFactory.visibility(Property.NONE))
                     }
                 }
             }
@@ -1206,6 +1201,130 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
     }
 
     /** Google-style place badge: coloured circle, white ring, white Material icon. */
+    /** Google-style red teardrop pin with a dark centre, pointing at the place. */
+    private fun makeDestPin(): Bitmap {
+        val d = resources.displayMetrics.density
+        val w = (30 * d).toInt(); val h = (42 * d).toInt()
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val r = w / 2f - d
+        val cx = w / 2f; val cy = r + d
+        val pin = android.graphics.Path().apply {
+            addCircle(cx, cy, r, android.graphics.Path.Direction.CW)
+            moveTo(cx - r * 0.82f, cy + r * 0.58f); lineTo(cx, h - d); lineTo(cx + r * 0.82f, cy + r * 0.58f); close()
+        }
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = 0xFFEA4335.toInt(); p.setShadowLayer(2.5f * d, 0f, d, 0x55000000); c.drawPath(pin, p)
+        p.clearShadowLayer(); p.style = Paint.Style.STROKE; p.strokeWidth = d; p.color = 0xFFB31412.toInt(); c.drawPath(pin, p)
+        p.style = Paint.Style.FILL; p.color = 0xFFB31412.toInt(); c.drawCircle(cx, cy, r * 0.36f, p)
+        return bmp
+    }
+
+    /** Google-style place badge: coloured round marker with a small point, white glyph. */
+    private fun makeBadge(color: Int, icon: String, sizeDp: Float, pointed: Boolean, square: Boolean = false): Bitmap {
+        val d = resources.displayMetrics.density
+        val s = (sizeDp * d).toInt(); val tail = if (pointed) (4 * d).toInt() else 0
+        val bmp = Bitmap.createBitmap(s + (2 * d).toInt(), s + tail + (2 * d).toInt(), Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        val cx = bmp.width / 2f; val r = s / 2f; val cy = r + d * 0.5f
+        val shape = android.graphics.Path().apply {
+            if (square) addRoundRect(RectF(cx - r, cy - r, cx + r, cy + r), r * 0.35f, r * 0.35f, android.graphics.Path.Direction.CW)
+            else addCircle(cx, cy, r, android.graphics.Path.Direction.CW)
+            if (pointed) { moveTo(cx - r * 0.45f, cy + r * 0.85f); lineTo(cx, cy + r + tail); lineTo(cx + r * 0.45f, cy + r * 0.85f); close() }
+        }
+        p.color = Color.WHITE; p.setShadowLayer(1.5f * d, 0f, 0.6f * d, 0x40000000); c.drawPath(shape, p); p.clearShadowLayer()
+        val inset = 1.6f * d
+        p.color = color
+        if (square) c.drawRoundRect(RectF(cx - r + inset, cy - r + inset, cx + r - inset, cy + r - inset), r * 0.3f, r * 0.3f, p)
+        else c.drawCircle(cx, cy, r - inset, p)
+        val g = s * 0.56f
+        AppIcons.draw(c, icon, Color.WHITE, cx - g / 2, cy - g / 2, g)
+        return bmp
+    }
+
+    /**
+     * Shops, food, bus stops and parking drawn from the map's own data (works offline and never
+     * waits for a server), styled like Google: coloured badges with names in the same colour.
+     */
+    private fun addPlaceLayers(st: Style) {
+        val dark = appliedStyle.endsWith("dark")
+        fun many(keys: List<String>, out: Any) = keys.map { Expression.stop(it, out) }.toTypedArray()
+        val srcId = st.layers.mapNotNull { (it as? SymbolLayer)?.takeIf { l -> l.sourceLayer == "poi" }?.sourceId }.firstOrNull() ?: "openmaptiles"
+        // group -> colour, glyph, label colour
+        val groups = linkedMapOf(
+            "grocery" to Triple(0xFF1A73E8.toInt(), "cart", "#1967D2"),
+            "shop" to Triple(0xFF1A73E8.toInt(), "bag", "#1967D2"),
+            "food" to Triple(0xFFF57C00.toInt(), "restaurant", "#C26401"),
+            "cafe" to Triple(0xFFF57C00.toInt(), "cafe", "#C26401"),
+            "bar" to Triple(0xFFF57C00.toInt(), "bar", "#C26401"),
+            "health" to Triple(0xFFE8453C.toInt(), "pharmacy", "#C5221F"),
+            "bike" to Triple(0xFF188038.toInt(), "bike", "#137333"),
+            "fuel" to Triple(0xFF12B5CB.toInt(), "charging", "#098591"),
+            "hotel" to Triple(0xFFE52592.toInt(), "hotel", "#B80672"),
+            "park" to Triple(0xFF34A853.toInt(), "park", "#137333"),
+            "school" to Triple(0xFF7B8794.toInt(), "school", "#5F6368"),
+            "other" to Triple(0xFF7B8794.toInt(), "place", "#5F6368"))
+        for ((g, v) in groups) st.addImage("g-$g", makeBadge(v.first, v.second, 22f, true))
+        st.addImage("g-bus", makeBadge(0xFF1A73E8.toInt(), "bus", 17f, false, square = true))
+        st.addImage("g-parking", makeBadge(0xFF4F7CC7.toInt(), "parking", 17f, false, square = true))
+        st.addImage("g-train", makeBadge(0xFF5E35B1.toInt(), "train", 19f, false, square = true))
+        val cls = Expression.get("class")
+        val group = Expression.match(cls, Expression.literal("other"),
+            Expression.stop("grocery", "grocery"), Expression.stop("supermarket", "grocery"),
+            *many(listOf("shop", "clothing_store", "hardware", "furniture", "jewelry", "alcohol_shop", "bakery",
+                "butcher", "laundry", "music", "car", "mobile_phone", "art_gallery", "gift", "books", "shoes", "florist", "beauty", "hairdresser",
+                "pet", "toys", "optician", "stationery", "electronics", "department_store", "convenience", "variety_store", "garden_centre", "computer"), "shop"),
+            *many(listOf("restaurant", "fast_food", "ice_cream", "food_court"), "food"),
+            *many(listOf("cafe"), "cafe"),
+            *many(listOf("bar", "beer", "pub", "biergarten"), "bar"),
+            *many(listOf("pharmacy", "hospital", "doctors", "dentist", "veterinary"), "health"),
+            Expression.stop("bicycle", "bike"),
+            *many(listOf("fuel", "charging_station"), "fuel"),
+            *many(listOf("lodging", "hotel"), "hotel"),
+            *many(listOf("park", "garden", "playground", "pitch", "sports_centre", "golf"), "park"),
+            *many(listOf("school", "college", "university", "kindergarten"), "school"))
+        val textCol = Expression.match(group, Expression.literal(groups.getValue("other").third),
+            *groups.entries.filter { it.key != "other" }.map { Expression.stop(it.key, it.value.third) }.toTypedArray())
+        // Google order of importance: supermarkets & shops first, then food, then the rest
+        val rank = Expression.match(group, Expression.literal(6),
+            Expression.stop("grocery", 0), Expression.stop("shop", 1), Expression.stop("food", 2), Expression.stop("cafe", 2),
+            Expression.stop("bar", 2), Expression.stop("health", 3), Expression.stop("bike", 2), Expression.stop("fuel", 3))
+        val vis = PropertyFactory.visibility(if (prefs().getBoolean("showPois", true)) Property.VISIBLE else Property.NONE)
+        val notTransit = Expression.all(Expression.has("name"),
+            Expression.match(cls, Expression.literal(true), *many(listOf("bus", "railway", "parking",
+                "bicycle_parking", "toilets", "information", "entrance", "atm", "post_box", "drinking_water", "bench", "waste_basket",
+                "recycling", "attraction", "tram", "ferry_terminal", "aerialway", "bicycle_rental", "town_hall"), false)))
+        fun labelled(id: String) = SymbolLayer(id, srcId).withProperties(
+            PropertyFactory.iconImage(Expression.concat(Expression.literal("g-"), group)), PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+            PropertyFactory.textField(Expression.get("name")), PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+            PropertyFactory.textSize(Expression.interpolate(Expression.linear(), Expression.zoom(), Expression.stop(14f, 11.5f), Expression.stop(17f, 13f))),
+            PropertyFactory.textColor(textCol), PropertyFactory.textHaloColor(if (dark) "#1F1F1F" else "#FFFFFF"), PropertyFactory.textHaloWidth(1.6f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(0.95f, -0.85f)),
+            PropertyFactory.textMaxWidth(8f), PropertyFactory.textOptional(true), PropertyFactory.symbolSortKey(rank), vis)
+            .also { it.sourceLayer = "poi" }
+        // supermarkets and big shops from a little further out, everything once zoomed in
+        st.addLayerBelow(labelled("g-poi-major").also {
+            it.setFilter(Expression.all(notTransit, Expression.eq(group, Expression.literal("grocery")))); it.setMinZoom(13.5f); it.setMaxZoom(15f)
+        }, "route-alt-casing")
+        st.addLayerBelow(labelled("g-poi").also { it.setFilter(notTransit); it.setMinZoom(15f) }, "route-alt-casing")
+        // bus stops, stations and parking: small neat squares, only when zoomed right in
+        val tIcon = Expression.match(cls, Expression.literal("g-bus"),
+            *many(listOf("parking", "bicycle_parking"), "g-parking"), Expression.stop("railway", "g-train"))
+        st.addLayerBelow(SymbolLayer("g-transit", srcId).withProperties(
+            PropertyFactory.iconImage(tIcon),
+            PropertyFactory.textField(Expression.match(cls, Expression.get("name"), *many(listOf("parking", "bicycle_parking"), ""))),
+            PropertyFactory.textFont(arrayOf("Noto Sans Regular")), PropertyFactory.textSize(11f),
+            PropertyFactory.textColor(if (dark) "#9FB4D6" else "#3C6CB4"), PropertyFactory.textHaloColor(if (dark) "#1F1F1F" else "#FFFFFF"),
+            PropertyFactory.textHaloWidth(1.5f), PropertyFactory.textAnchor(Property.TEXT_ANCHOR_LEFT), PropertyFactory.textOffset(arrayOf(1.0f, 0f)),
+            PropertyFactory.textMaxWidth(7f), PropertyFactory.textOptional(true), PropertyFactory.symbolSortKey(8f), vis)
+            .also {
+                it.sourceLayer = "poi"; it.setMinZoom(16f)
+                it.setFilter(Expression.match(cls, Expression.literal(false),
+                    *many(listOf("bus", "railway", "parking", "bicycle_parking"), true)))
+            }, "route-alt-casing")
+    }
+
     private fun makePoiIcon(color: String, icon: String): Bitmap {
         val sz = 72
         val bmp = Bitmap.createBitmap(sz, sz, Bitmap.Config.ARGB_8888)
@@ -1383,12 +1502,6 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
             textSize = 12f; setTextColor(MUTED); setPadding(0, dp(10), 0, dp(14))
         })
         sheet.addView(pillButton("@navigation  Start", BLUE, Color.WHITE) { startNav() }, LinearLayout.LayoutParams(MATCH, dp(56)))
-        // no traffic key needed: show this trip in Google Maps, which has live traffic
-        sheet.addView(TextView(this).apply {
-            iconText("@traffic  Check traffic in Google Maps", BLUE, 16); textSize = 14f; setTextColor(BLUE); gravity = Gravity.CENTER
-            setPadding(0, dp(12), 0, dp(2))
-            setOnClickListener { openTrafficInGoogleMaps() }
-        })
     }
 
     private fun selectRoute(i: Int) { sel = i; redrawRoutes(); fillRoutesSheet(); fitRoute() }
@@ -2034,22 +2147,13 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         toast(if (trafficOn) "Live traffic on" else "Live traffic off")
     }
 
-    /** Opens this route's destination in Google Maps (driving view shows live traffic). No key needed. */
-    private fun openTrafficInGoogleMaps() {
-        val d = dest ?: return
-        val uri = android.net.Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${d.lat},${d.lon}&travelmode=driving")
-        val i = Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps")
-        try { startActivity(i) } catch (_: Exception) { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-    }
-
     private fun askTrafficKey() {
         val input = EditText(this).apply { hint = "Paste your TomTom API key"; setSingleLine(true) }
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
         AlertDialog.Builder(this).setTitle("Live traffic")
             .setMessage("Live traffic needs a free TomTom key (one rider is well within the free daily limit):\n\n" +
                     "1. Go to my.tomtom.com and sign up (free, no card)\n" +
-                    "2. Find your API key there and copy it\n3. Paste it below\n\n" +
-                    "No key? Use “Traffic in Google Maps” on the route screen instead.")
+                    "2. Find your API key there and copy it\n3. Paste it below")
             .setView(box)
             .setNeutralButton("Open my.tomtom.com") { _, _ ->
                 startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://my.tomtom.com/"))) }
@@ -2142,7 +2246,7 @@ class MainActivity : android.app.Activity(), BleManager.Listener, LocationListen
         } else if (p.getBoolean("buildings3d", false) != applied3d) {
             applied3d = p.getBoolean("buildings3d", false)
             m.setStyle(Style.Builder().fromUri(appliedStyle)) { st -> addLayers(st) }
-        } else for (lid in listOf("poi-l", "poi-major")) m.style?.getLayer(lid)?.setProperties(
+        } else for (lid in listOf("g-poi", "g-poi-major", "g-transit")) m.style?.getLayer(lid)?.setProperties(
             PropertyFactory.visibility(if (p.getBoolean("showPois", true)) Property.VISIBLE else Property.NONE))
         applyMode()
     }
